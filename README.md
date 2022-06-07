@@ -1,6 +1,6 @@
 # PROPER
 
-**P**ython **R**econstruction **O**f **P**RIM **E**xperimental **R**esults
+**P**ython for **R**econstruction **O**f **P**RIM **E**xperimental **R**esults
 
 Software companion to the **PRIM**
 
