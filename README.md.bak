@@ -32,9 +32,8 @@ Software companion to the **PRIM**
         * `interm` - intermediate data storage for machine use
         * `output` - for human use, validation, logging, etc.
     1. `init` - collect and organize data
-    1. `reconstruction` - data processing
-    1. `transform` - surface transforms
-    1. `graph` - 3D rendering and plotting
+    1. `transform` - data processing
+    1. `analysis` - maths and plotting
     1. `viz` - visualization: plots, renders, etc.
 1. `_snapshots` weekly local backup non-data files & show modified files
         

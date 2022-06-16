@@ -138,6 +138,7 @@ def snapshot(description="manual", scheduled=False):
     """(description, scheduled) Copy scripts to snapshot if there isn't one for this week already,
     and files have been changed"""
     print("...Checking snapshots...")
+
     if not os.path.exists(snapdir):
         raise ValueError("_snapshot folder does not exist in project parent dir!")
     if not os.path.exists(snapdir / projname):
@@ -185,10 +186,10 @@ def snapshot(description="manual", scheduled=False):
         if len(difffiles + newfiles) == 0 or delta < 7:
             # Don't snapshot if no files have been modified or it has been less than 1 week since
             return None
-        else:
-            print("Saving snapshot...")
-            destdir = snapdir / projname / destname
-            copytree(projdir, destdir, ignore=copytreeignoredirs)
+
+    print("Saving snapshot...")
+    destdir = snapdir / projname / destname
+    copytree(projdir, destdir, ignore=copytreeignoredirs)
 
     for f, d in zip(difffiles, difffiledirs):
         diff = [item for item in d.parts if item not in projdir.parts]
@@ -314,6 +315,10 @@ def is_date(string, fuzzy=False):
     except ValueError:
         return False
 
+def interpolation(d, x):
+    """d data, middle part to interpolate"""
+    output = d[1][0] + (x - d[0][0]) * ((d[1][1] - d[1][0]) / (d[0][1] - d[0][0]))
+    return output
 
 # =================================================== FILE HANDLING ================================================== #
 
@@ -377,10 +382,12 @@ def loaddata(path):
     return data
 
 
-def writeinterm(filename, data):
+def writeinterm(filename, data, inparallel=False):
     """Dump data into pickle file in path"""
     filename += ".pick"
     filepath = intermdir
+    if inparallel:
+        filepath = intermdir / "_parallel-stores"
     mkdirpy(filepath)
     file = filepath / filename
     potentialrename = True
@@ -414,6 +421,32 @@ def videoreaderror(sample, i):
     print(sample._label)
     print("Current frame: " + str(i))
     print("Total frames: " + str(sample.totalframes))
+
+
+def makevideo(filepath, data, fps):
+    if len(data[0].shape) == 3:
+        size = data[0].shape[::-1][1:3]
+    else:
+        size = data[0].shape[::-1]
+    video = cv2.VideoWriter(str(filepath),
+                            cv2.VideoWriter_fourcc(*"mp4v"),
+                            fps, size, 1)
+    for img in data:
+        video.write(img)
+    cv2.destroyAllWindows()
+    video.release()
+
+def outputvideo(filename, data, fps, subdir=""):
+    filepath = outputdir / subdir
+    mkdirpy(filepath)
+    video = cv2.VideoWriter(str(filepath / filename),
+                            cv2.VideoWriter_fourcc(*"mp4v"),
+                            fps, data[0].shape[0:2], 1)
+    for img in data:
+        video.write(img)
+    cv2.destroyAllWindows()
+    video.release()
+
 
 
 # =================================================== GETTERS ======================================================== #
@@ -521,6 +554,10 @@ def getframes(sample, ddframes):
     print("Frames not found")
     return None
 
+def getattrs(dd, attr):
+
+    for s in dd.samples:
+        pass
 
 # =================================================== ALGORITHMS ===================================================== #
 
@@ -1174,6 +1211,187 @@ def compareexcelsmulti2(file1, file2):
     df2.close()
     print(timer.total())
     return True
+
+
+###
+
+def carve(s):
+    print(s.letter)
+    usemiddle = True
+    s.vols = []
+    s.cubes = []
+    for i in range(len(s.intervals)):
+        if i == int(len(s.intervals) / 2):
+            print("\t50%")
+        if "top" in s.redviews:
+            v = getview(s, "top")
+            top = v.fills[i]
+            top = cv2.flip(top, 0)
+        else:
+            v = getview(s, "bottom")
+            top = v.fills[i]
+        if "left" in s.redviews:
+            v = getview(s, "left")
+            left = v.fills[i]
+            left = cv2.rotate(left, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        else:
+            v = getview(s, "right")
+            left = v.fills[i]
+            left = cv2.rotate(left, cv2.ROTATE_90_CLOCKWISE)
+
+        maxy = max(left.shape[0], top.shape[0])
+        leftx = left.shape[1]
+        topx = top.shape[1]
+
+        # Realign tops of bladder views and re-pad blank space
+        y_nonzero, x_nonzero = np.nonzero(top)
+        # top = top[np.min(y_nonzero):np.max(y_nonzero) + 1, np.min(x_nonzero):np.max(x_nonzero) + 1]
+        top = top[:np.max(y_nonzero) + 1, :]
+        y_nonzero, x_nonzero = np.nonzero(left)
+        # left = left[np.min(y_nonzero):np.max(y_nonzero) + 1, np.min(x_nonzero):np.max(x_nonzero) + 1]
+        left = left[:np.max(y_nonzero) + 1, :]
+        top = cv2.copyMakeBorder(top, 0, maxy - top.shape[0], 0, 0, cv2.BORDER_CONSTANT, 0)
+        left = cv2.copyMakeBorder(left, 0, maxy - left.shape[0], 0, 0, cv2.BORDER_CONSTANT, 0)
+
+        cube = np.ones((leftx, topx, maxy))
+        topT = np.transpose(top)
+        leftT = np.transpose(left)
+
+        for k in range(leftx):
+            cube[k, :, :] = cube[k, :, :] * topT
+        for k in range(topx):
+            cube[:, k, :] = cube[:, k, :] * leftT
+        for k in range(maxy):
+            topk = int(sum(top[k]))
+            leftk = int(sum(left[k]))
+            if topk == 0 or leftk == 0:
+                continue
+
+            if usemiddle:
+                middlev = getview(s, "middle")
+                middlecircle = middlev.fills[i]
+            else:
+                middlecircle = cv2.circle(np.zeros((401, 401)), (200, 200), 200, 1, -1)
+            y_nonzero, x_nonzero = np.nonzero(middlecircle)
+            middlecircle = middlecircle[np.min(y_nonzero):np.max(y_nonzero) + 1,
+                           np.min(x_nonzero):np.max(x_nonzero) + 1]
+            middlers = cv2.resize(middlecircle, (int(sum(top[k])), int(sum(left[k]))), interpolation=cv2.INTER_NEAREST)
+            y_nonzero, x_nonzero = np.nonzero(cube[:, :, k])
+            x1 = min(x_nonzero)
+            y1 = min(y_nonzero)
+            x2 = max(x_nonzero)
+            y2 = max(y_nonzero)
+            xy1 = (min(x_nonzero), min(y_nonzero))
+            xy2 = (max(x_nonzero), max(y_nonzero))
+            l = np.sum(cube[:, :, k], axis=0)
+            w = np.sum(cube[:, :, k], axis=1)
+
+            try:
+                cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * middlers
+            except:  # Not really sure when this would happen
+                l2 = np.trim_zeros(l, 'fb') / max(l)
+                w2 = np.trim_zeros(w, 'fb') / max(w)
+
+                if len(l2) != sum(l2):  # The x y assignments here might be completely wrong
+                    # print("length")
+                    circletemplate = cv2.resize(middlecircle, (len(l2), len(w2)), interpolation=cv2.INTER_NEAREST)
+                    cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * circletemplate
+                    zwhere = np.where(l2 == 0)[0]
+                    dims = (zwhere[0], y2 - y1 + 1)
+                    x1 = min(x_nonzero)
+                    # x1 = min(lwhere)
+                    x2 = x1 + zwhere[0] - 1
+                    middlers = cv2.resize(middlecircle, (dims[0], dims[1]), interpolation=cv2.INTER_NEAREST)
+                    cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * middlers
+                    # dims = (y2 - y1 - zwhere[-1], x2 - x1 + 1)
+                    x2 = max(x_nonzero)  # WHYYY IS THIS HERE AND NOT IN THE WIDTH ADDED 5-16-22
+                    dims = (x2 - x1 - zwhere[-1], y2 - y1 + 1)  # FIXED
+                    # dims = (x2 - x1 + 1, y2 - y1 + 1)  # FIXED MORE
+                    x1 = x1 + zwhere[-1] + 1
+                    x2 = max(x_nonzero)
+                    middlers = cv2.resize(middlecircle, (dims[0], dims[1]), interpolation=cv2.INTER_NEAREST)
+                    cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * middlers
+
+                    x1 = min(x_nonzero)
+
+                if len(w2) != sum(w2):
+                    # print("width")
+                    # display(cube[:,:,k])
+                    # Right here is hacky but it works?
+                    circletemplate = cv2.resize(middlecircle, (len(l2), len(w2)), interpolation=cv2.INTER_NEAREST)
+                    cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * circletemplate
+                    zwhere = np.where(w2 == 0)[0]
+                    dims = (x2 - x1 + 1, zwhere[0])
+                    y1 = min(y_nonzero)
+                    # y1 = min(wwhere)
+                    y2 = y1 + zwhere[0] - 1
+                    middlers = cv2.resize(middlecircle, (dims[0], dims[1]), interpolation=cv2.INTER_NEAREST)
+                    cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * middlers
+                    # display(cube[xy1[1]:xy2[1]+1, xy1[0]:xy2[0]+1, k]) # See the hackyness
+                    y2 = max(y_nonzero)  # ADDED 5-16-22
+                    dims = (x2 - x1 + 1, y2 - zwhere[-1] - y1)
+                    y1 = min(y_nonzero) + zwhere[-1] + 1
+                    y2 = max(y_nonzero)
+                    middlers = cv2.resize(middlecircle, (dims[0], dims[1]), interpolation=cv2.INTER_NEAREST)
+                    cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * middlers
+
+                # cube[y1:y2 + 1, x1:x2 + 1, k] = cube[y1:y2 + 1, x1:x2 + 1, k] * middlers
+
+        # cube = ndimage.median_filter(cube, size=4)
+        # cube = np.rot90(cube, 2, (0, 2))
+        vol = round(sum(sum(sum(cube))) * 0.064 * 0.064 * 0.064, 3)
+        s.vols.append(vol)
+        s.cubes.append(cube.astype(np.uint8))
+    s.vols = np.array(s.vols)
+    s.cubes = np.array(s.cubes)
+
+    return s
+
+
+def hollow(s):
+    print("\t", "Hollowing...")
+    s.cubes2 = []
+    for cube in s.cubes:
+        cube2 = np.zeros(cube.shape, dtype=np.uint8)
+        for i in range(cube.shape[0]):
+            for j in range(cube.shape[1]):
+                row = cube[i, j, :]
+                if np.all(row == 0):
+                    continue
+                nz = row.nonzero()[0]
+                l = nz[0]
+                r = nz[-1]
+                cube2[i, j, l] += 1
+                cube2[i, j, r] += 1
+        for i in range(cube.shape[0]):
+            for j in range(cube.shape[2]):
+                row = cube[i, :, j]
+                if np.all(row == 0):
+                    continue
+                nz = row.nonzero()[0]
+                l = nz[0]
+                r = nz[-1]
+                cube2[i, l, j] += 1
+                cube2[i, r, j] += 1
+        for i in range(cube.shape[1]):
+            for j in range(cube.shape[2]):
+                row = cube[:, i, j]
+                if np.all(row == 0):
+                    continue
+                nz = row.nonzero()[0]
+                l = nz[0]
+                r = nz[-1]
+                cube2[l, i, j] += 1
+                cube2[r, i, j] += 1
+        cube2 = np.ceil(cube2 / np.max(cube2)).astype(np.uint8)
+        cube2 = (cube * 2) - cube2
+        s.cubes2.append(cube2.astype(np.uint8))
+    s.cubes2 = np.array(s.cubes2)
+
+    return s
+
+
+
 
 
 def main():

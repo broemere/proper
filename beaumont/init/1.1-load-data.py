@@ -34,7 +34,7 @@ for pth, dirs, files in os.walk(rawdir):
 
         csv = pd.read_csv(Path(pth, f), skiprows=1, names=["msec", "bits", "pressure"])
         pt = csv.drop(columns=["bits"])
-        pt["p"] = pt["pressure"] - pt["pressure"].min()
+        pt["p"] = pt["pressure"] - pt["pressure"].iloc[:1000].min()
         pt["pkpa"] = pt["p"]/mmhg2kpa
         pt["t"] = pt["msec"] - pt["msec"].iloc[0]
         if (pt["t"] < 0).any(): raise ValueError("Negative time")
@@ -89,6 +89,7 @@ for s in dd.samples:
 
     s.start = s.pt["p"].idxmin()
     s.intervals = np.around(np.linspace(s.start, s.totalframes-1, 100)).astype(int)
+
 
 
 printkeys(s)

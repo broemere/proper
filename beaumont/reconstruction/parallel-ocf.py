@@ -1,25 +1,22 @@
 # @author: broemere
 # created: 6/3/2022
 """
-Alternate OCF script for processing samples in parallel
+Alternate OCF/voxellization script for processing in parallel. Run in terminal.
 """
 import sys
-sys.path.insert(1, "/")
-sys.path.insert(1, "..\\..\\")
+sys.path.insert(1, "../..\\")
 from elib import *
-
 dd = loadinterm("1-canny")
 
-magicnumber = 52
-kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
-smoothsize = 5 # Must be odd
 
 poolsize = 10
 
 
-#%%
-
 def ocffirst(s):  # 90 minutes / 100 frames
+    magicnumber = 52
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    smoothsize = 5  # Must be odd
+    s.intervals = s.intervals.tolist()
     for v in s.redviews:
         view = getview(s, v)
         if view.location in s.redviews:
@@ -30,7 +27,6 @@ def ocffirst(s):  # 90 minutes / 100 frames
 
     # for cny, frameloc in zip(s.cannys, s.intervals):
     for cny, frameloc in zip(s.cannys, s.intervals):
-        # print(str(s.intervals.index(frameloc)+1) + "/" + str(8) + " - " + str(frameloc))
         print(str(s.intervals.index(frameloc) + 1) + "/" + str(len(s.intervals)) + " - " + str(frameloc))
         for v in s.redviews:
             view = getview(s, v)
@@ -48,7 +44,7 @@ def ocffirst(s):  # 90 minutes / 100 frames
             floodfill = floodfill[view.redbox[0]:view.redbox[1], view.redbox[2]:view.redbox[3]]
             floodfillold = deepcopy(floodfill)
             blacklist = []
-            print("view", s.letter)
+            #print("view", s.letter)
 
             while True:
                 floodfill = cv2.dilate(floodfill, kernel, iterations=1)
@@ -94,7 +90,7 @@ def ocffirst(s):  # 90 minutes / 100 frames
 
             cnts, hiers = cv2.findContours(canv.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
             if len(cnts) > 1:
-                print("Extra contours")
+                #print("Extra contours")
                 cnts = [nlargestcnts3(canv.astype(np.uint8), 1, 0)['cnt'].item()]
                 view.fills.pop()
                 canv = np.zeros(canv.shape)
@@ -113,33 +109,20 @@ def ocffirst(s):  # 90 minutes / 100 frames
                 cy = int(M['m01'] / M['m00']) + view.redbox[0]
                 view.greencenter = (cx, cy)
 
-        #break
-
-
-
-
-def pool_handler3():
-    p = mp.Pool(poolsize)
-    p.map(ocffirst, dd.samples)
+    del s.cannys
+    print("\t\t\t", s.letter,  'DONE')
+    writeinterm(f"2-ocf-parallel-{s.letter}", s, inparallel=True)
+    return s
 
 
 if __name__ == '__main__':
     timer = runstartup()
+    p = mp.Pool(poolsize)
+    dd.samples = p.map(ocffirst, dd.samples)
+    timer.check(True)
 
-    for s in dd.samples:
-        s.intervals = s.intervals.tolist()
-        #ocffirst(s)
-    timer.check()
-
-    pool_handler3()
-    timer.check()
-
-    for s in dd.samples:
-        ocffirst(s)
-    timer.check()
-
+    print([s.letter for s in dd.samples])
+    nsdetails(dd.samples[-1])
     writeinterm("2-ocf-parallel", dd)
-
     exitcode = input("Exit")
-
 

@@ -17,8 +17,6 @@ dd.const.middleview = True
 
 kernel = np.ones((3,3),np.uint8)
 
-#dd.samples = dd.samples[:2]
-
 for s in dd.samples:
     print(s._label)
     filename = s._label + "_last_red.png"
@@ -76,7 +74,7 @@ for s in dd.samples:
         if j in redorder.index:
             redi = redorder[j]
             redcnt = s.redsegments["cnt"].iloc[redi]
-            view.redview = cv2.drawContours(np.zeros(redchannel.shape), [redcnt], -1, 1, -1)
+            view.redview = cv2.drawContours(np.zeros(redchannel.shape), [redcnt], -1, 1, -1).astype(np.uint8)
             view.redcnt = redcnt
             s.redviews.append(s.vieworder[j])
         s.views.append(view)

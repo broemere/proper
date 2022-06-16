@@ -9,16 +9,20 @@ dd = loadinterm("1-canny")
 
 ocfdir = outputdir / "ocf"
 mkdirpy(ocfdir)
-savefigs = True
+savefigs = False
 magicnumber = 52
 
 #%%
 kernel = np.ones((17,17),np.uint8)
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
 
+dd.samples = [dd.samples[4]]
+
 if __name__== "__main__":
     smoothsize = 5 # Must be odd
     for s in dd.samples:
+        if s.letter != "E":
+            continue
         print(s._label)
         s.intervals = s.intervals.tolist()
         for v in s.redviews:
@@ -116,6 +120,9 @@ if __name__== "__main__":
         del s.cannys
         del s.frames
 
+        print("\t\t\t", s.letter, 'DONE')
+        writeinterm(f"99-ocf-parallel-{s.letter}", s)
+
 timer.check(True)
 
 nsdetails(s)
@@ -136,4 +143,4 @@ if savefigs:
             filepath = ocfdir / filename
             cv2.imwrite(str(filepath), strip * 255)
 
-writeinterm("2-ocf", dd)
+#writeinterm("2-ocf", dd)

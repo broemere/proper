@@ -10,6 +10,7 @@ dd = loadinterm("1-crop")
 cannydir = outputdir / "canny"
 mkdirpy(cannydir)
 savefigs = True
+saveallfigs = True
 
 #%%
 kernel = np.ones((3,3),np.uint8)
@@ -34,11 +35,19 @@ for s in dd.samples:  # 10 sec per
             strip = np.concatenate((strip, cny),axis=1)
             strip = np.concatenate((strip, np.ones((s.padbox3[1] - s.padbox3[0], 2))), axis=1)
     if savefigs:
-        filename = s.letter + "-canny.png"
+        filename = s.letter + ".png"
         filepath = cannydir / filename
         cv2.imwrite(str(filepath), strip*255)
+    if saveallfigs:
+        alldir = cannydir / s.letter
+        mkdirpy(alldir)
+        for i, cny in enumerate(s.cannys):
+            filename = s.letter + str(i) + ".png"
+            filepath = alldir / filename
+            cv2.imwrite(str(filepath), cny*255)
 
-    #del s.frames
+
+    del s.frames
 
 nsdetails(s)
 
