@@ -67,9 +67,6 @@ def find_binary_th(img):
 
 def smooth_data(data, method, r):
     n = len(data["t"])
-    #cache = json_load(".nicegui/storage-general.json")
-    #method = cache["smoothing"]
-    #r = cache["smooth_range"] + 1
     if method == "None":
         return data
     elif method == "Min":
@@ -101,18 +98,13 @@ def smooth_data(data, method, r):
     return {"t": data["t"], "p": [round(x, 2) for x in new_p]}
 
 
-def zero_data(data, method, r, smooth_method, smooth_r):
-    new_data = smooth_data(data, smooth_method, smooth_r)
-    #cache = json_load(".nicegui/storage-general.json")
-    #method = cache["zeroing"]
-    #r = cache["zero_range"] + 1
+def zero_data(data, method, r):
     if method == "None":
-        return new_data
-
+        return data
     if method == "First":
-        zero = new_data["p"][0]
+        zero = data["p"][0]
     elif method in ("Min", "Mean", "Median"):
-        subset = new_data["p"][0:r]
+        subset = data["p"][0:r]
         if method == "Min":
             zero = min(subset)
         elif method == "Mean":
@@ -122,6 +114,5 @@ def zero_data(data, method, r, smooth_method, smooth_r):
     else:
         #return ui.notify("ZEROING ERROR: INCORRECT METHOD")
         print("Zeroing Error")
-
-    new_p = [round(p - zero, 2) for p in new_data["p"]]
-    return {"t": new_data["t"], "p": new_p}
+    new_p = [round(p - zero, 2) for p in data["p"]]
+    return {"t": data["t"], "p": new_p}
