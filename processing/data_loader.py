@@ -5,6 +5,7 @@ import cv2
 from processing.file_handling import *
 import logging
 
+
 log = logging.getLogger(__name__)
 
 # def frame_loader(signals, vid_file, frame_indices):

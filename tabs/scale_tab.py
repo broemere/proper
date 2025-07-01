@@ -1,11 +1,12 @@
 from PySide6.QtCore import Qt, Signal, QPointF, QRect
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy,
-    QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout
+    QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout, QButtonGroup
 )
-from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen
+from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen, QCursor, QIcon
 from data_pipeline import DataPipeline
 import numpy as np
+from processing.resource_loader import load_cursor
 
 
 class ScaledLineCanvas(QWidget):
@@ -60,6 +61,8 @@ class ScaledLineCanvas(QWidget):
         self._offset_y: float = 0.0
         self._scale_factor: float = 1.0
 
+        self._zoom_cursor = load_cursor("zoom", hot_x=1, hot_y=1)
+        self._scale_cursor = load_cursor("scale", hot_x=1, hot_y=1)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -103,6 +106,7 @@ class ScaledLineCanvas(QWidget):
         if mode not in ('line', 'zoom') or mode == self.mode:
             return
 
+        old_mode = self.mode
         self.mode = mode
 
         # If we had stashed an old line (_old_line) but were mid-drawing a new one,
@@ -126,6 +130,9 @@ class ScaledLineCanvas(QWidget):
 
         self.update()
         self.mode_changed.emit(self.mode)
+
+        if mode != old_mode:
+            self._update_cursor()
 
     def undo_last_line(self):
         """
@@ -332,8 +339,25 @@ class ScaledLineCanvas(QWidget):
                     painter.setPen(pen)
                     painter.drawLine(p0, p1)
 
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._update_cursor()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        # back to whatever the OS default is
+        self.unsetCursor()
+
     # ——————————————
     # Private helpers
+
+    def _update_cursor(self):
+        if self.mode == "zoom":
+            # show your custom zoom-in cursor
+            self.setCursor(self._zoom_cursor)
+        else:
+            # line mode or anything else: go back to default arrow
+            self.setCursor(self._scale_cursor)
 
     def _widget_to_image(self, pt: QPointF) -> QPointF | None:
         """
@@ -443,41 +467,50 @@ class ScaleTab(QWidget):
         self.line_canvas = ScaledLineCanvas(parent=self)
         self.line_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         tab_layout.addWidget(self.line_canvas, stretch=1)
-
         # Connect the new signal
         self.line_canvas.line_completed.connect(self._on_line_completed)
+        self.line_canvas.mode_changed.connect(self._on_canvas_mode_changed)
 
         # --- (2) Control buttons row ---
         ctrl_row = QHBoxLayout()
-
         # Refresh
         self.refresh_btn_line = QPushButton()
         self.refresh_btn_line.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.refresh_btn_line.setToolTip("Refresh")
         ctrl_row.addWidget(self.refresh_btn_line)
         self.refresh_btn_line.clicked.connect(self._refresh_scale)
-
         # Zoom / Line toggle
-        self.zoom_btn = QPushButton("Zoom Box")
-        self.line_btn = QPushButton("Line Mode")
+        self.zoom_btn = QPushButton()
         self.zoom_btn.setCheckable(True)
+        self.line_btn = QPushButton()
         self.line_btn.setCheckable(True)
-        self.zoom_btn.setChecked(True)  # default to zoom mode
+        zoom_icon = QIcon("resources/zoom.png")
+        line_icon = QIcon("resources/scale.png")
+        self.zoom_btn.setIcon(zoom_icon)
+        self.line_btn.setIcon(line_icon)
+        self.zoom_btn.setToolTip("Zoom Box Mode")
+        self.line_btn.setToolTip("Line Drawing Mode")
 
-        self.zoom_btn.clicked.connect(lambda checked: self._set_canvas_mode('zoom', checked))
-        self.line_btn.clicked.connect(lambda checked: self._set_canvas_mode('line', checked))
+        # 2. Group them so only one can be checked at a time.
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        self.mode_group.addButton(self.zoom_btn)
+        self.mode_group.addButton(self.line_btn)
 
-        # Keep buttons in sync if canvas itself changes mode
-        self.line_canvas.mode_changed.connect(self._on_canvas_mode_changed)
+        # 3. Set your default.
+        self.zoom_btn.setChecked(True)
 
+        # 4. Connect to toggled and only respond on the True case.
+        self.zoom_btn.toggled.connect(lambda checked: checked and self._set_canvas_mode('zoom'))
+        self.line_btn.toggled.connect(lambda checked: checked and self._set_canvas_mode('line'))
+
+        # 5. Lay them out.
         ctrl_row.addWidget(self.zoom_btn)
         ctrl_row.addWidget(self.line_btn)
-
         # Undo
         undo_btn = QPushButton("Undo")
         undo_btn.clicked.connect(self.line_canvas.undo_last_line)
         ctrl_row.addWidget(undo_btn)
-
         tab_layout.addLayout(ctrl_row)
 
         # --- (3) Scale details row ---
@@ -491,31 +524,32 @@ class ScaleTab(QWidget):
         self.known_length_spin.setValue(getattr(self.pipeline, "known_length", 0.0))
         scale_row.addWidget(self.known_length_spin)
         self.known_length_spin.valueChanged.connect(self._on_known_length_changed)
-
         # Pixel length [px]
         scale_row.addWidget(QLabel("Line Length [px]:"))
         self.pixel_label = QLabel("0.00")
         scale_row.addWidget(self.pixel_label)
-
         # Conversion [px/mm]
         scale_row.addWidget(QLabel("Conversion [px/mm]:"))
         self.conversion_label = QLabel("0.00")
+        self.conversion_label.setTextInteractionFlags(
+            Qt.TextSelectableByMouse  # enables click‐and‐drag selection
+            | Qt.TextSelectableByKeyboard  # also lets keyboard selection/copy
+        )
         scale_row.addWidget(self.conversion_label)
-
-        # 3d) Manual override checkbox
-        self.manual_check = QCheckBox("Set manually")
-        self.manual_check.stateChanged.connect(self._on_manual_override_toggled)
-        scale_row.addWidget(self.manual_check)
-
-        # 3e) Manual conversion spin (hidden by default)
-        self.manual_conversion_spin = QDoubleSpinBox()
-        self.manual_conversion_spin.setDecimals(4)
-        self.manual_conversion_spin.setRange(0.0, 1e6)
-        # Pre-set to 1.0 or to whatever conversion_label is initially
-        self.manual_conversion_spin.setValue(1.0)
-        self.manual_conversion_spin.setVisible(False)
-        self.manual_conversion_spin.valueChanged.connect(self._on_manual_conversion_changed)
-        scale_row.addWidget(self.manual_conversion_spin)
+        # # 3d) Manual override checkbox
+        # self.manual_check = QCheckBox("Set manually")
+        # self.manual_check.stateChanged.connect(self._on_manual_override_toggled)
+        # scale_row.addWidget(self.manual_check)
+        #
+        # # 3e) Manual conversion spin (hidden by default)
+        # self.manual_conversion_spin = QDoubleSpinBox()
+        # self.manual_conversion_spin.setDecimals(4)
+        # self.manual_conversion_spin.setRange(0.0, 1e6)
+        # # Pre-set to 1.0 or to whatever conversion_label is initially
+        # self.manual_conversion_spin.setValue(1.0)
+        # self.manual_conversion_spin.setVisible(False)
+        # self.manual_conversion_spin.valueChanged.connect(self._on_manual_conversion_changed)
+        # scale_row.addWidget(self.manual_conversion_spin)
         tab_layout.addLayout(scale_row)
 
     def _show_scale_image(self, img_array: np.ndarray):
@@ -540,22 +574,13 @@ class ScaleTab(QWidget):
             self.line_btn.setChecked(True)
             self.zoom_btn.setChecked(False)
 
-    def _set_canvas_mode(self, mode: str, checked: bool):
+    def _set_canvas_mode(self, mode: str):
         """
-        Called when the user clicks either Zoom Box or Line Mode button.
-        If checked=True, switch the canvas mode; if checked=False, revert to line mode.
+        Switch the canvas into the given mode.
+        (We only call this when its button actually toggles on,
+        so no need to handle the "unchecked" case.)
         """
-        if checked:
-            self.line_canvas.set_mode(mode)
-            if mode == 'zoom':
-                self.line_btn.setChecked(False)
-            else:
-                self.zoom_btn.setChecked(False)
-        else:
-            # If the user unchecks either button, force line mode
-            self.line_canvas.set_mode('line')
-            self.line_btn.setChecked(True)
-            self.zoom_btn.setChecked(False)
+        self.line_canvas.set_mode(mode)
 
     def _on_line_completed(self, length_px: float):
         """
@@ -574,12 +599,8 @@ class ScaleTab(QWidget):
         else:
             auto_conv = 0.0
 
-        # 3) If manual override is OFF → show auto label
-        if not self.manual_check.isChecked():
-            self.conversion_label.setText(f"{auto_conv:.4f}")
-        else:
-            # If manual override is ON, copy the auto_conv into the spin so user can tweak
-            self.manual_conversion_spin.setValue(auto_conv)
+        self.conversion_label.setText(f"{auto_conv:.4f}")
+
 
     def _on_known_length_changed(self, new_val: float):
         """
@@ -587,9 +608,6 @@ class ScaleTab(QWidget):
         we already have a pixel length, recalc conversion. If manual override is ON,
         do nothing here (user controls the spin).
         """
-        if self.manual_check.isChecked():
-            return
-
         # If pixel_label holds a valid float, recalc
         try:
             px = float(self.pixel_label.text())
@@ -601,39 +619,6 @@ class ScaleTab(QWidget):
             self.conversion_label.setText(f"{conv:.4f}")
         else:
             self.conversion_label.setText("0.00")
-
-    def _on_manual_override_toggled(self, state: int):
-        """
-        When “Set manually” is checked, hide conversion_label and show manual spin, preloading it
-        with whatever conversion_label currently says. When unchecked, hide manual spin and show
-        conversion_label, then recalc auto‐conversion.
-        """
-        if state == Qt.Checked:
-            # 1) Hide the label, show the spin
-            self.conversion_label.setVisible(False)
-            self.manual_conversion_spin.setVisible(True)
-
-            # 2) Preload the spin with the current automatic conversion
-            try:
-                current_auto = float(self.conversion_label.text())
-            except ValueError:
-                current_auto = 0.0
-            self.manual_conversion_spin.setValue(current_auto)
-
-        else:
-            # 1) Hide the spin, show the label
-            self.manual_conversion_spin.setVisible(False)
-            self.conversion_label.setVisible(True)
-
-            # 2) Recalculate auto conversion immediately
-            self._recalculate_conversion()
-
-    def _on_manual_conversion_changed(self, new_val: float):
-        """
-        If manual override is ON and user changes the spin, write new_val into conversion_label.
-        """
-        if self.manual_check.isChecked():
-            self.conversion_label.setText(f"{new_val:.4f}")
 
     def _recalculate_conversion(self):
         """
