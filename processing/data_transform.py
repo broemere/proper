@@ -2,6 +2,7 @@ from statistics import mean, median
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 import cv2
+from PySide6.QtGui import QImage, QPixmap
 
 
 def brightness_contrast(img, brightness, contrast):
@@ -116,3 +117,43 @@ def zero_data(data, method, r):
         print("Zeroing Error")
     new_p = [round(p - zero, 2) for p in data["p"]]
     return {"t": data["t"], "p": new_p}
+
+
+def numpy_to_qpixmap(numpy_array: np.ndarray) -> QPixmap:
+    """
+    Converts a NumPy array to a QPixmap.
+
+    Handles both grayscale (2D) and color (3D) images.
+    Assumes color images from OpenCV are in BGR format.
+    """
+    if numpy_array is None:
+        return QPixmap()  # Return an empty pixmap if the array is null
+
+    height, width = numpy_array.shape[:2]
+    bytes_per_line = numpy_array.strides[0]
+
+    # --- Determine the QImage format ---
+    if numpy_array.ndim == 2:
+        # Grayscale image
+        q_image_format = QImage.Format_Grayscale8
+    elif numpy_array.ndim == 3:
+        # Color image
+        if numpy_array.shape[2] == 4:
+            # RGBA format
+            q_image_format = QImage.Format_RGBA8888
+        else:
+            # Standard 3-channel color. OpenCV uses BGR, but Qt needs RGB.
+            # We must convert it.
+            numpy_array = cv2.cvtColor(numpy_array, cv2.COLOR_BGR2RGB)
+            q_image_format = QImage.Format_RGB888
+    else:
+        # Unsupported format
+        return QPixmap()
+
+    # --- Create QImage from the NumPy array's memory buffer ---
+    q_image = QImage(numpy_array.data, width, height, bytes_per_line, q_image_format)
+
+    # QImage might hold a reference to the numpy array. To be safe,
+    # copy it before returning, so the array can be garbage collected.
+    return QPixmap.fromImage(q_image.copy())
+

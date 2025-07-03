@@ -138,9 +138,9 @@ class PlotTab(QWidget):
         self.smooth_curve.setData(t, p)
 
     def _new_data_loaded(self, data):
-        self.spin_start.setMaximum(self.pipeline.length)
-        self.spin_stop.setMaximum(self.pipeline.length)
-        self.spin_stop.setValue(self.pipeline.length)
+        self.spin_start.setMaximum(self.pipeline.length-1)
+        self.spin_stop.setMaximum(self.pipeline.length-1)
+        self.spin_stop.setValue(self.pipeline.length-1)
         self._apply_trim()
         # self._apply_zeroing()
         # zeroed_data = self.pipeline.get_data("zeroed")

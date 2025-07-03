@@ -41,7 +41,6 @@ class FilePickerWidget(QWidget):
                                                "CSV Files (*.csv);;All Files (*)")
         if path:
             self.settings.setValue("last_dir", str(Path(path).parent))
-            self.file_label.setText(Path(path).name)
             self.csv_selected.emit(path)
 
     def choose_video(self):
@@ -50,9 +49,14 @@ class FilePickerWidget(QWidget):
                                                "Video Files (*.avi *.mkv *.tif *.tiff);;All Files (*)")
         if path:
             self.settings.setValue("last_dir", str(Path(path).parent))
-            self.video_label.setText(Path(path).name)
             self.video_selected.emit(path)
 
             # self.pipeline.video = path
             # self._init_video_tab()
             # self._get_frames()
+
+    def set_csv_label(self, path):
+        self.file_label.setText(Path(path).name)
+
+    def set_video_label(self, path):
+        self.video_label.setText(Path(path).name)

@@ -2,38 +2,13 @@ from collections import defaultdict
 import csv
 import numpy as np
 import cv2
-from processing.file_handling import *
 import logging
 
 
 log = logging.getLogger(__name__)
 
-# def frame_loader(signals, vid_file, frame_indices):
-#     vid = cv2.VideoCapture(vid_file)
-#     frame_count = int(vid.get(7))
-#     signals.message.emit("Collecting frame data")
-#     for i, f in enumerate(frame_indices):
-#         vid.set(cv2.CAP_PROP_POS_FRAMES, f)
-#         res, frame = vid.read()
-#         if res:
-#             try:
-#                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-#                 for j in range(len(str(frame_count))):
-#                     gray[0, i] = int(str(frame_count)[j])
-#                 gray[0, i + 1] = 10
-#                 out_dir = str(make_dir(home / "images"))
-#                 output_filename = os.path.join(out_dir, f"{os.path.splitext(os.path.basename(vid_file))[0]}_{f}.png")
-#                 cv2.imwrite(output_filename, gray)
-#                 #yield i / len(frame_indices)
-#                 pct = int((i/len(frame_indices)) * 100)
-#                 signals.progress.emit(pct)
-#             except:
-#                 vid.release()
-#     vid.release()
-#     #yield 1
-#     signals.progress.emit(100)
 
-def frame_loader(signals, vid_file, frame_indices):
+def frame_loader(signals, vid_file, frame_indices, count=False):
     """
     Loads specific frames from a video file, handling errors gracefully.
     """
@@ -91,6 +66,9 @@ def frame_loader(signals, vid_file, frame_indices):
                 log.error(f"Error processing frame at index {f}: {e}", exc_info=True)
                 # exc_info=True will add the full traceback to the log, which is invaluable.
                 signals.message.emit(f"Error on frame {f}, see log for details.")
+
+        if count:
+            loaded_frames[frame_count] = None
 
     finally:
         # This code will ALWAYS run, ensuring cleanup.
