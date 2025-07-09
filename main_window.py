@@ -7,8 +7,10 @@ from widgets.status_bar import StatusBarWidget
 from widgets.file_picker import FilePickerWidget
 from tabs.plot_tab import PlotTab
 from tabs.scale_tab import ScaleTab
-from tabs.frame_picker import FrameTab
+from tabs.frame_tab import FrameTab
 from widgets.file_autoloader import find_and_prompt_for_video, find_and_prompt_for_csv
+from tabs.level_tab import LevelTab
+from tabs.thresh_tab import ThreshTab
 
 
 class MainWindow(QMainWindow):
@@ -63,6 +65,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.scale_tab, f"Scale")
         self.frame_tab = FrameTab(self.pipeline)
         self.tabs.addTab(self.frame_tab, f"Frame Picker")
+        self.level_tab = LevelTab(self.pipeline)
+        self.tabs.addTab(self.level_tab, f"Level")
+        self.thresh_tab = ThreshTab(self.pipeline)
+        self.tabs.addTab(self.thresh_tab, f"Threshold")
 
         self.tabs.setCurrentIndex(1)
         parent_layout.addWidget(self.tabs)

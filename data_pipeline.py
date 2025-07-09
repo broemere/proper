@@ -44,6 +44,8 @@ class DataPipeline:
 
         self.scale_frame = 21
         self.scale_image: np.ndarray = None
+        self.left_image: np.ndarray = None
+        self.right_image: np.ndarray = None
 
 
     def register_observer(self, key: str, callback):
@@ -162,6 +164,8 @@ class DataPipeline:
         first_frame_index = next(iter(result))
         self.left_image = result[first_frame_index]
         self.notify_observers('left_image', self.left_image)
+        self.apply_leveling()
+        self.apply_thresh()
 
     def load_right_frame(self, index=None):
         if index is None:
@@ -180,6 +184,8 @@ class DataPipeline:
         first_frame_index = next(iter(result))
         self.right_image = result[first_frame_index]
         self.notify_observers('right_image', self.right_image)
+        self.apply_leveling()
+        self.apply_thresh()
 
     def set_images(self, image_array_first: np.ndarray, image_array: np.ndarray):
         """Store the original frame and initialize transformed_image to match."""
@@ -194,11 +200,9 @@ class DataPipeline:
 
     def apply_leveling(self):
         """Recompute transformed_image from baseline_image using current self.brightness and self.contrast (0–100)"""
-        if self.baseline_image is None:
+        if self.left_image is None:
             return
 
-        img_first = self.baseline_image_first.astype(np.float32)
-        img = self.baseline_image.astype(np.float32)
         default_min, default_max = 0.0, 255.0
         full_range = default_max - default_min  # 255
         slider_range = 100.0
@@ -218,28 +222,31 @@ class DataPipeline:
         denom = (new_max - new_min) if (new_max - new_min) != 0 else eps
 
         # linear map [new_min,new_max] → [0,255], per‐channel
-        leveled_first = ((img_first - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
-        self.transformed_image_first = leveled_first
-        leveled = ((img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
-        self.transformed_image = leveled
-        self.notify_observers('bcimage', [self.transformed_image_first, self.transformed_image])
+        left_img = self.left_image.astype(np.float32)
+        self.left_leveled = ((left_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
+        if self.right_image is not None:
+            right_img = self.right_image.astype(np.float32)
+            self.right_leveled = ((right_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
+        else:
+            self.right_leveled = None
+        self.notify_observers('leveled', [self.left_leveled, self.right_leveled])
+        #self.apply_thresh()
 
     def apply_thresh(self):
         """
         Apply a binary threshold to the *transformed_image*, not baseline.
         Pixels >= self.threshold become 255; others 0.
         """
-        if self.transformed_image is None:
+        if self.left_leveled is None:
             return
 
-        img_first = self.transformed_image_first.astype(np.uint8)
         th = self.threshold  # (for a 2D grayscale image)
-        th_img_first = np.where(img_first >= th, 255, 0).astype(np.uint8)
-        self.threshed_image_first = th_img_first
+        self.left_threshed = np.where(self.left_leveled >= th, 255, 0).astype(np.uint8)
 
-        img = self.transformed_image.astype(np.uint8)
-        th_img = np.where(img >= th, 255, 0).astype(np.uint8)
-        self.threshed_image = th_img
-
-        self.notify_observers('thimage', [self.threshed_image_first, self.threshed_image])
+        if self.right_image is not None:
+            self.right_threshed = np.where(self.right_leveled >= th, 255, 0).astype(np.uint8)
+        else:
+            self.right_threshed = None
+        self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
+        #self.notify_observers('thimage', [self.threshed_image_first, self.threshed_image])
 

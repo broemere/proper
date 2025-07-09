@@ -7,7 +7,6 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 from config import APP_NAME, APP_VERSION, ORG
 
 
-
 if __name__ == '__main__':
     logging.basicConfig(
         level=logging.INFO,  # Set the minimum level of message to capture (DEBUG, INFO, WARNING, ERROR)

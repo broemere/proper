@@ -7,39 +7,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen, QCursor, QIcon
 import numpy as np
 from processing.data_transform import numpy_to_qpixmap
+from widgets.adaptive_image import AutoResizeImage
 
-class AspectRatioLabel(QLabel):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._pixmap = None
-        self.setMinimumSize(0, 0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-
-    def setPixmap(self, pixmap: QPixmap):
-        # Store the full-resolution (original) pixmap
-        self._pixmap = pixmap
-        # Perform an immediate scaling operation based on the label's CURRENT size.
-        scaled_pixmap = self._pixmap.scaled(
-            self.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        # Set the *displayed* pixmap to this newly scaled version.
-        super().setPixmap(scaled_pixmap)
-
-    def minimumSizeHint(self) -> QSize:
-        # allow the layout to shrink us down to 0×0 if it wants
-        return QSize(0, 0)
-
-    def resizeEvent(self, event):
-        if self._pixmap:
-            scaled = self._pixmap.scaled(
-                self.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            super().setPixmap(scaled)
-        super().resizeEvent(event)
 
 
 class FrameTab(QWidget):
@@ -72,7 +41,7 @@ class FrameTab(QWidget):
         images_row = QHBoxLayout()
 
         # 1) Image placeholder
-        self.frame_label1 = AspectRatioLabel("No data")
+        self.frame_label1 = AutoResizeImage("No data")
         self.frame_label1.setFrameShape(QFrame.Box)
         self.frame_label1.setSizePolicy(
             QSizePolicy.Ignored,  # allow width to shrink/grow
@@ -80,7 +49,7 @@ class FrameTab(QWidget):
         )
         images_row.addWidget(self.frame_label1, alignment=Qt.AlignHCenter | Qt.AlignVCenter)
 
-        self.frame_label2 = AspectRatioLabel("No data")
+        self.frame_label2 = AutoResizeImage("No data")
         self.frame_label2.setFrameShape(QFrame.Box)
         self.frame_label2.setSizePolicy(
             QSizePolicy.Ignored,  # allow width to shrink/grow
@@ -287,7 +256,6 @@ class FrameTab(QWidget):
 
         self._refresh_left_pressures(self.left_slider.value())
         self._refresh_right_pressures(self.right_slider.value())
-
 
     def _update_left_frame(self, frame: np.ndarray):
         """

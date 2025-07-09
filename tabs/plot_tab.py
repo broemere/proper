@@ -86,7 +86,6 @@ class PlotTab(QWidget):
         self._hover_source = None
         self._hover_region = None
 
-
     def _create_plot_widget(self, title: str) -> pg.PlotWidget:
         """Helper to create a theme-aware plot with zero lines"""
         plot = pg.PlotWidget(title=title)

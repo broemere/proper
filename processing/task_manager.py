@@ -21,7 +21,6 @@ class TaskManager(QObject):
         self.active_workers = set()
         log.info("Task Manager initialized.")
 
-
     def queue_task(self, fn, *args, on_result=None, **kwargs):
         """Add a job at the end of the queue."""
         log.info(f"Queueing task: {fn.__name__}")
@@ -72,27 +71,18 @@ class TaskManager(QObject):
         else:
             worker.signals.result.connect(self._on_result)
 
-        # Connect the finished signal to our new cleanup slot
+        # Connect the finished signal to new cleanup slot
         worker.signals.finished.connect(lambda w=worker: self._on_worker_finished(w))
         # when this one finishes, run the next in queue
         worker.signals.finished.connect(self._run_next)
-
         self.active_workers.add(worker)
         log.info(f"Starting worker for {fn.__name__}. Active workers: {len(self.active_workers)}")
-
         self.pool.start(worker)
 
-    @Slot() # New slot for cleanup
+    @Slot()
     def _on_worker_finished(self, finished_worker):
-        """
-        Find which worker sent the 'finished' signal and remove it from our active set.
-        """
-        # self.sender() returns the QObject that emitted the signal (the WorkerSignals object)
-        # Its parent() is the Worker instance itself.
-        #finished_worker = self.sender().parent()
         self.active_workers.discard(finished_worker)
         log.info(f"Worker for {finished_worker.fn.__name__} finished. Active workers: {len(self.active_workers)}")
-
 
     def _on_error(self, err_tb):
         exc, tb_str = err_tb
@@ -103,7 +93,6 @@ class TaskManager(QObject):
     def _on_result(self, result):
         # handle generic results if you like
         pass
-
 
 
 class Worker(QRunnable):
