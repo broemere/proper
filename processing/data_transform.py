@@ -3,7 +3,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 import cv2
 from PySide6.QtGui import QImage, QPixmap
-from skimage.measure import label
+from skimage.measure import label, regionprops_table
 from skimage.color import label2rgb
 import logging
 log = logging.getLogger(__name__)
@@ -233,7 +233,7 @@ def get_kernel_size(l):
         k = k + 1
     return int(k)
 
-def label_image(signals, arr):
+def label_image(signals, arr, left_right):
     try:
         log.info("Worker starting: label_image task.")
 
@@ -250,14 +250,14 @@ def label_image(signals, arr):
         labels = label(arr_opened, background=0, connectivity=2)
 
         log.info("Worker finished: label_image task successful.")
-        return labels
+        return [labels, left_right]
 
     except Exception:
         log.exception("An unhandled exception occurred in the label_image worker!")
         return None
 
 
-def create_visual_from_labels(signals, labels, min_size=None):
+def create_visual_from_labels(signals, labels, left_right, min_size=None):
     """
     Filters small blobs from a labels array and converts it to a color image,
     reporting progress along the way.
@@ -282,7 +282,7 @@ def create_visual_from_labels(signals, labels, min_size=None):
         n_labels = 0
 
         if total_to_check > 0:
-            signals.message.emit(f"Filtering {total_to_check} blobs...")
+            signals.message.emit(f"Analyzing {total_to_check} blobs...")
             for i, label_id in enumerate(labels_to_check):
                 # Filter blobs smaller than the threshold
                 if label_sizes[label_id] < min_size:
@@ -295,6 +295,16 @@ def create_visual_from_labels(signals, labels, min_size=None):
                 if i == 0 or (pct % 5 == 0 and int((i / total_to_check) * 100) != pct):
                     signals.progress.emit(pct)
 
+        signals.message.emit("Calculating blob properties...")
+        # Define which properties you want to extract
+        properties_to_measure = [
+        'label', 'area', 'centroid', 'perimeter', 'solidity', 'extent',
+        'major_axis_length', 'minor_axis_length', 'eccentricity',
+        'orientation', 'moments_hu'
+        ]
+        # Use regionprops_table for efficient calculation on the filtered array
+        props = regionprops_table(filtered_labels, properties=properties_to_measure)
+
         signals.message.emit("Generating color image...")
         color_image = label2rgb(filtered_labels, bg_label=0, bg_color=(0, 0, 0))
         color_image_uint8 = (color_image * 255).astype(np.uint8)
@@ -304,7 +314,7 @@ def create_visual_from_labels(signals, labels, min_size=None):
         log.info(f"Found {n_labels} viable labels and {total_to_check} total labels")
 
         # Return both the original labels (for analysis) and the new visual
-        return {'labels': labels, 'visual': color_image_uint8}
+        return {'labels': filtered_labels, 'visual': color_image_uint8, 'left_right': left_right, 'properties': props}
 
     except Exception as e:
         log.exception("Error in create_visual_from_labels worker!")

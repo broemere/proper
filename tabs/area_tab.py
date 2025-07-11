@@ -19,43 +19,46 @@ class AreaTab(QWidget):
         self.pipeline = pipeline
         self.segmented_result = None
         self._has_been_shown = False
-        self.pipeline.left_cleaned_old = None
+        self.pipeline.left_threshed_old = None
+        self.pipeline.MAX_MARKERS = 5
         self.init_ui()
         #self.pipeline.register_observer("segmented", self.show_result)
         self.pipeline.register_observer("visualization_ready", self.on_visualization_ready)
 
     def init_ui(self):
-        self.analysis_widget = AreaAnalysisWidget()
+        self.area_widget = AreaAnalysisWidget(self.pipeline.MAX_MARKERS)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.analysis_widget)
+        layout.addWidget(self.area_widget)
 
     def showEvent(self, event):
         super().showEvent(event)
         # Assuming self.pipeline.left_cleaned is the numpy array from the polygon tool
 
-        current_image = self.pipeline.left_cleaned
+        current_image = self.pipeline.left_threshed
         if current_image is None:
             # Nothing to process if there's no image
             return
 
         # Determine if we need to run the segmentation task.
         # This is True if the backup doesn't exist OR if the current image is different from the backup.
-        should_run_task = (self.pipeline.left_cleaned_old is None or
-                           not np.array_equal(current_image, self.pipeline.left_cleaned_old))
+        should_run_task = (self.pipeline.left_threshed_old is None or
+                           not np.array_equal(current_image, self.pipeline.left_threshed_old))
 
         if should_run_task:
             # If a run is needed, update the backup copy and queue the task.
-            self.pipeline.left_cleaned_old = current_image.copy()
-            self.pipeline.segment_image(current_image)
+            self.pipeline.left_threshed_old = current_image.copy()
+            self.pipeline.segment_image(current_image, "left")
 
     def on_visualization_ready(self, data: dict):
         """Receives the final data dictionary and updates the analysis widget."""
 
         labels_array = data['labels']
         visual_array = data['visual']
+        left_right = data['left_right']
+        props = data['properties']
 
         # Convert the color numpy array to a QPixmap for display
         visual_pixmap = numpy_to_qpixmap(visual_array)
 
         # Pass the colorized pixmap (for display) and original labels (for analysis)
-        self.analysis_widget.set_data(visual_pixmap, labels_array)
+        self.area_widget.set_data(visual_pixmap, labels_array)

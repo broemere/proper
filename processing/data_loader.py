@@ -40,6 +40,7 @@ def frame_loader(signals, vid_file, frame_indices, count=False):
                     continue # Skip to the next frame
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                cv2.normalize(gray, gray, 0, 255, cv2.NORM_MINMAX)
 
                 # This part seems unusual and could be a source of errors
                 # If 'i' goes out of bounds for the number of pixels in the first row,

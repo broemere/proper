@@ -72,11 +72,6 @@ class MainWindow(QMainWindow):
         self.thresh_tab = ThreshTab(self.pipeline)
         self.tabs.addTab(self.thresh_tab, f"Threshold")
 
-        self.canvas_tab_left = CanvasTab(self.pipeline, "left")
-        self.tabs.addTab(self.canvas_tab_left, f"Draw 1")
-        self.canvas_tab_right = CanvasTab(self.pipeline, "right")
-        self.tabs.addTab(self.canvas_tab_right, f"Draw 2")
-
         self.area_tab_left = AreaTab(self.pipeline, "left")
         self.tabs.addTab(self.area_tab_left, f"Area 1")
 

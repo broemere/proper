@@ -29,7 +29,7 @@ class DataPipeline:
         self.trim_start = 0
         self.trim_stop = 42
         self.known_length = 0
-        self.conversion_factor = 0
+        self.conversion_factor = 1
         self._observers = {}
         self.task_manager = None
         self.__dict__.update(settings)
@@ -38,6 +38,11 @@ class DataPipeline:
         self.scale_image: np.ndarray = None
         self.left_image: np.ndarray = None
         self.right_image: np.ndarray = None
+
+        self.left_level_blobs: np.ndarray = None
+        self.right_level_blobs: np.ndarray = None
+        self.left_thresh_blobs: np.ndarray = None
+        self.right_thresh_blobs: np.ndarray = None
 
 
     def register_observer(self, key: str, callback):
@@ -155,9 +160,9 @@ class DataPipeline:
     def left_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))
         self.left_image = result[first_frame_index]
+        self.left_image_user = None
         self.notify_observers('left_image', self.left_image)
-        self.apply_leveling()
-        self.apply_thresh()
+        self.level_update()
 
     def load_right_frame(self, index=None):
         if index is None:
@@ -175,9 +180,9 @@ class DataPipeline:
     def right_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))
         self.right_image = result[first_frame_index]
+        self.right_image_user = None
         self.notify_observers('right_image', self.right_image)
-        self.apply_leveling()
-        self.apply_thresh()
+        self.level_update()
 
     def set_images(self, image_array_first: np.ndarray, image_array: np.ndarray):
         """Store the original frame and initialize transformed_image to match."""
@@ -215,49 +220,67 @@ class DataPipeline:
 
         # linear map [new_min,new_max] → [0,255], per‐channel
         left_img = self.left_image.astype(np.float32)
-        self.left_leveled = ((left_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
+        left_leveled = ((left_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
         if self.right_image is not None:
             right_img = self.right_image.astype(np.float32)
-            self.right_leveled = ((right_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
+            right_leveled = ((right_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
         else:
-            self.right_leveled = None
-        self.notify_observers('leveled', [self.left_leveled, self.right_leveled])
-        #self.apply_thresh()
+            right_leveled = None
 
-    def apply_thresh(self):
+        left_leveled, right_leveled = self.paste_level_blobs(left_leveled, right_leveled)
+
+        self.notify_observers('leveled', [left_leveled, right_leveled])
+        return [left_leveled, right_leveled]
+
+    def apply_thresh(self, frame_data=None):
         """
         Apply a binary threshold to the *transformed_image*, not baseline.
         Pixels >= self.threshold become 255; others 0.
         """
-        if self.left_leveled is None:
+        if frame_data is None:
+            left_leveled = self.left_leveled
+            right_leveled = self.right_leveled
+        else:
+            left_leveled, right_leveled = frame_data
+
+        if left_leveled is None:
             return
 
         th = self.threshold  # (for a 2D grayscale image)
-        self.left_threshed = np.where(self.left_leveled >= th, 255, 0).astype(np.uint8)
+        self.left_threshed = np.where(left_leveled >= th, 255, 0).astype(np.uint8)
 
         if self.right_image is not None:
-            self.right_threshed = np.where(self.right_leveled >= th, 255, 0).astype(np.uint8)
+            self.right_threshed = np.where(right_leveled >= th, 255, 0).astype(np.uint8)
         else:
             self.right_threshed = None
-        self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
-        #self.notify_observers('thimage', [self.threshed_image_first, self.threshed_image])
 
-    def segment_image(self, arr):
+        self.left_threshed, self.right_threshed = self.paste_thresh_blobs(self.left_threshed, self.right_threshed)
+
+        self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
+
+    def level_update(self):
+        frames = self.apply_leveling()
+        self.apply_thresh(frames)
+        self.left_leveled, self.right_leveled = frames
+
+    def segment_image(self, arr, left_right):
         log.info("Queueing label_image task for worker.")
-        print(arr.dtype)
         self.task_manager.queue_task(
             label_image,  # The function to run
             arr,
+            left_right,
             on_result=self.image_segmented # Optional: a method in DataPipeline to handle the result
         )
 
     def image_segmented(self, result):
         """Handles the result from the label worker and starts the visualization task."""
         if result is not None:
+            labels, left_right = result
             log.info("Received segmentation. Queueing visualization task.")
             self.task_manager.queue_task(
                 create_visual_from_labels,
-                result,  # Pass the labels array to the worker
+                labels,
+                left_right, # Pass the labels array to the worker
                 on_result=self._visualization_created
             )
         else:
@@ -271,3 +294,28 @@ class DataPipeline:
             self.notify_observers('visualization_ready', result)
         else:
             log.warning("Visualization worker failed or returned no data.")
+
+    def paste_level_blobs(self, left_img, right_img):
+        if self.left_level_blobs is not None:
+            white = np.max(left_img)
+            black = np.min(left_img)
+            mask = (self.left_level_blobs != 127)
+            clamped = np.clip(self.left_level_blobs, black, white)
+            left_img[mask] = clamped[mask]
+        if self.right_level_blobs is not None:
+            white = np.max(right_img)
+            black = np.min(right_img)
+            mask = (self.right_level_blobs != 127)
+            clamped = np.clip(self.right_level_blobs, black, white)
+            right_img[mask] = clamped[mask]
+        return left_img, right_img
+
+
+    def paste_thresh_blobs(self, left_img, right_img):
+        if self.left_thresh_blobs is not None:
+            mask = (self.left_thresh_blobs != 127)
+            left_img[mask] = self.left_thresh_blobs[mask]
+        if self.right_thresh_blobs is not None:
+            mask = (self.right_thresh_blobs != 127)
+            right_img[mask] = self.right_thresh_blobs[mask]
+        return left_img, right_img

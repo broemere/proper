@@ -14,8 +14,9 @@ class PolygonCanvas(QWidget):
         self.completed_polygons = []
         self.active_polygon = None
         self.current_pos = None
+        self.base_pixmap = None
         self.background_pixmap = None
-        self.current_tool = 'polygon'
+        self.current_tool = 'lasso'
         self.is_drawing_lasso = False
         self.final_color = QColor(Qt.black)
         self.setMouseTracking(True)
@@ -29,17 +30,16 @@ class PolygonCanvas(QWidget):
         """Sets the active drawing tool ('polygon' or 'lasso')."""
         if tool_name in ['polygon', 'lasso'] and self.current_tool != tool_name:
             self.current_tool = tool_name
-
             # Cancel any active drawing when switching tools
             self.active_polygon = None
             self.is_drawing_lasso = False
             self.current_pos = None
             self.update()
 
-    def set_background(self, pixmap: QPixmap):
+    def set_pixmap(self, background_pixmap: QPixmap):
         """Set a fixed-size background and reset polygons."""
-        self.background_pixmap = pixmap
-        self.setFixedSize(pixmap.size())  # enforce 1:1 mapping
+        self.background_pixmap = background_pixmap
+        self.setFixedSize(background_pixmap.size())  # enforce 1:1 mapping
         self.completed_polygons = []
         self.active_polygon = None
         self.update()
@@ -192,26 +192,27 @@ class PolygonCanvas(QWidget):
             self._flatten_and_emit()
 
     def _flatten_and_emit(self):
+        """Draws polygons, converts to NumPy array, and emits it."""
+        final_array = self.get_flattened_image()
+        if final_array is not None:
+            self.image_flattened.emit(final_array)
+
+    def get_flattened_image(self) -> np.ndarray | None:
         """
-        Draws polygons onto a QImage, converts it to a NumPy array,
-        and emits the array.
+        Draws the current state (background + polygons) onto a new QImage
+        and returns it as a NumPy array. This is a synchronous operation.
         """
         if not self.background_pixmap:
-            return
-
-        # 1. Create and draw on a temporary QImage
+            return None
         w, h = self.background_pixmap.width(), self.background_pixmap.height()
         temp_image = QImage(w, h, QImage.Format_Grayscale8)
-
         painter = QPainter(temp_image)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.drawPixmap(0, 0, self.background_pixmap)
+        #painter.drawPixmap(0, 0, self.base_pixmap)
+        temp_image.fill(127)  # fill every pixel with gray level 127
         for poly in self.completed_polygons:
             painter.setBrush(poly['color'])
             painter.setPen(QPen(poly['color'], 1))
             painter.drawPolygon(poly['points'])
         painter.end()
-
-        # 2. Immediately convert the QImage to a NumPy array
-        final_array = qimage_to_numpy(temp_image)
-        self.image_flattened.emit(final_array)
+        return qimage_to_numpy(temp_image)

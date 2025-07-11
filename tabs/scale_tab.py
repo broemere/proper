@@ -530,7 +530,7 @@ class ScaleTab(QWidget):
         scale_row.addWidget(self.pixel_label)
         # Conversion [px/mm]
         scale_row.addWidget(QLabel("Conversion [px/mm]:"))
-        self.conversion_label = QLabel("0.00")
+        self.conversion_label = QLabel(str(self.pipeline.conversion_factor))
         self.conversion_label.setTextInteractionFlags(
             Qt.TextSelectableByMouse  # enables click‐and‐drag selection
             | Qt.TextSelectableByKeyboard  # also lets keyboard selection/copy
@@ -600,6 +600,7 @@ class ScaleTab(QWidget):
             auto_conv = 0.0
 
         self.conversion_label.setText(f"{auto_conv:.4f}")
+        self.pipeline.conversion_factor = auto_conv
 
 
     def _on_known_length_changed(self, new_val: float):
@@ -617,6 +618,7 @@ class ScaleTab(QWidget):
         if new_val > 0 and px > 0:
             conv = px / new_val
             self.conversion_label.setText(f"{conv:.4f}")
+            self.pipeline.conversion_factor = conv
         else:
             self.conversion_label.setText("0.00")
 
@@ -633,5 +635,6 @@ class ScaleTab(QWidget):
         if mm > 0 and px > 0:
             conv = px / mm
             self.conversion_label.setText(f"{conv:.4f}")
+            self.pipeline.conversion_factor = conv
         else:
             self.conversion_label.setText("0.00")
