@@ -1,11 +1,6 @@
 from data_pipeline import DataPipeline
-from PySide6.QtCore import Qt, Signal, QPointF, QRect, QSize, QTimer, Slot
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy,
-    QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout, QButtonGroup, QSlider, QFrame
-)
-from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen, QCursor, QIcon
-import numpy as np
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSizePolicy, QSlider, QFrame
 from processing.data_transform import numpy_to_qpixmap
 from widgets.adaptive_image import AutoResizeImage
 
@@ -23,7 +18,6 @@ class ThreshTab(QWidget):
         tab_layout = QVBoxLayout(self)
         images_row = QHBoxLayout()
 
-        # 1) Image placeholder
         self.frame_label1 = AutoResizeImage("No data")
         self.frame_label1.setFrameShape(QFrame.Box)
         self.frame_label1.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)  # allow width/height to shrink/grow
@@ -57,20 +51,12 @@ class ThreshTab(QWidget):
         self.cb_auto = QComboBox()
         self.cb_auto.addItems(auto_methods)
         self.cb_auto.setDisabled(True)
-        #self.cb_auto.setCurrentText(self.pipeline.zeroing_method)
-        #self.cb_auto.currentTextChanged.connect(self._apply_zeroing)
         auto_layout.addWidget(self.cb_auto)
-        #self.spin_zero_window = QSpinBox(minimum=0, maximum=999, value=7)
-        #self.spin_zero_window.installEventFilter(self)
-        #self.spin_zero_window.valueChanged.connect(self._apply_zeroing)
-        #zero_layout.addWidget(QLabel('Window'))
-        #zero_layout.addWidget(self.spin_zero_window)
         ctrl_row.addLayout(auto_layout)
 
         tab_layout.addLayout(ctrl_row)
 
         self.t_slider.valueChanged.connect(lambda v: self._on_thresh_change(self.t_value, "threshold", v))
-
 
     def _update_frames(self, frames):
         """

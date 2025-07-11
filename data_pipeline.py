@@ -1,4 +1,4 @@
-from processing.data_transform import zero_data, smooth_data
+from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels
 from processing.data_loader import load_csv, frame_loader
 import numpy as np
 import logging
@@ -33,14 +33,6 @@ class DataPipeline:
         self._observers = {}
         self.task_manager = None
         self.__dict__.update(settings)
-
-        self.baseline_image_first: np.ndarray = None
-        self.transformed_image_first: np.ndarray = None
-        self.threshed_image_first: np.ndarray = None
-
-        self.baseline_image: np.ndarray = None
-        self.transformed_image: np.ndarray = None
-        self.threshed_image: np.ndarray = None
 
         self.scale_frame = 21
         self.scale_image: np.ndarray = None
@@ -250,3 +242,32 @@ class DataPipeline:
         self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
         #self.notify_observers('thimage', [self.threshed_image_first, self.threshed_image])
 
+    def segment_image(self, arr):
+        log.info("Queueing label_image task for worker.")
+        print(arr.dtype)
+        self.task_manager.queue_task(
+            label_image,  # The function to run
+            arr,
+            on_result=self.image_segmented # Optional: a method in DataPipeline to handle the result
+        )
+
+    def image_segmented(self, result):
+        """Handles the result from the label worker and starts the visualization task."""
+        if result is not None:
+            log.info("Received segmentation. Queueing visualization task.")
+            self.task_manager.queue_task(
+                create_visual_from_labels,
+                result,  # Pass the labels array to the worker
+                on_result=self._visualization_created
+            )
+        else:
+            log.warning("Received None from label worker, aborting visualization.")
+
+    def _visualization_created(self, result):
+        """Handles the result from the visualization worker."""
+        if result and result['visual'] is not None:
+            log.info("Received color visualization from worker.")
+            # Notify the UI with the dictionary containing both arrays
+            self.notify_observers('visualization_ready', result)
+        else:
+            log.warning("Visualization worker failed or returned no data.")

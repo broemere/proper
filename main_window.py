@@ -12,6 +12,7 @@ from widgets.file_autoloader import find_and_prompt_for_video, find_and_prompt_f
 from tabs.level_tab import LevelTab
 from tabs.thresh_tab import ThreshTab
 from tabs.canvas_tab import CanvasTab
+from tabs.area_tab import AreaTab
 
 
 class MainWindow(QMainWindow):
@@ -75,6 +76,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.canvas_tab_left, f"Draw 1")
         self.canvas_tab_right = CanvasTab(self.pipeline, "right")
         self.tabs.addTab(self.canvas_tab_right, f"Draw 2")
+
+        self.area_tab_left = AreaTab(self.pipeline, "left")
+        self.tabs.addTab(self.area_tab_left, f"Area 1")
 
         self.tabs.setCurrentIndex(1)
         parent_layout.addWidget(self.tabs)

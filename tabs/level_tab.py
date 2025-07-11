@@ -1,11 +1,6 @@
 from data_pipeline import DataPipeline
-from PySide6.QtCore import Qt, Signal, QPointF, QRect, QSize, QTimer, Slot
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy,
-    QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout, QButtonGroup, QSlider, QFrame
-)
-from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen, QCursor, QIcon
-import numpy as np
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QSizePolicy, QSlider, QFrame
 from processing.data_transform import numpy_to_qpixmap
 from widgets.adaptive_image import AutoResizeImage
 
@@ -80,7 +75,6 @@ class LevelTab(QWidget):
         self.b_slider.valueChanged.connect(lambda v: self._on_level_change(self.b_value, "brightness", v))
         self.c_slider.valueChanged.connect(lambda v: self._on_level_change(self.c_value, "contrast", v))
 
-
     def _update_frames(self, frames):
         """
         Slot that receives the NumPy array from the pipeline and updates the UI.
@@ -91,7 +85,6 @@ class LevelTab(QWidget):
         if frame_right is not None:
             pixmap = numpy_to_qpixmap(frame_right)
             self.frame_label2.setPixmap(pixmap)
-
 
     def _on_level_change(self, value_label: QLabel, attr: str, value: int):
         # show new slider value

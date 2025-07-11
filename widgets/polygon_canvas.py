@@ -1,12 +1,14 @@
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPixmap, QPainter, QPen
+from PySide6.QtGui import QColor, QPixmap, QPainter, QPen, QImage
 from PySide6.QtWidgets import QWidget
+import numpy as np
+from processing.data_transform import qimage_to_numpy
 
 
 class PolygonCanvas(QWidget):
     color_changed = Signal(QColor)
-    #tool_changed = Signal(str)
-    image_flattened = Signal(QPixmap)
+    tool_changed = Signal(str)
+    image_flattened = Signal(np.ndarray)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.completed_polygons = []
@@ -27,7 +29,7 @@ class PolygonCanvas(QWidget):
         """Sets the active drawing tool ('polygon' or 'lasso')."""
         if tool_name in ['polygon', 'lasso'] and self.current_tool != tool_name:
             self.current_tool = tool_name
-            #self.tool_changed.emit(self.current_tool)
+
             # Cancel any active drawing when switching tools
             self.active_polygon = None
             self.is_drawing_lasso = False
@@ -133,6 +135,15 @@ class PolygonCanvas(QWidget):
             self.update()  # Schedule a repaint to reflect potential live-edge color changes
             return
 
+        # T changes the tool
+        if event.key() == Qt.Key_T:
+            if self.current_tool == 'polygon':
+                new_tool = 'lasso'
+            else:
+                new_tool = 'polygon'
+            self.tool_changed.emit(new_tool)
+            return
+
         super().keyPressEvent(event)
 
     def paintEvent(self, event):
@@ -182,30 +193,25 @@ class PolygonCanvas(QWidget):
 
     def _flatten_and_emit(self):
         """
-        Draws all completed polygons onto a copy of the background
-        and emits the result via the 'image_flattened' signal.
+        Draws polygons onto a QImage, converts it to a NumPy array,
+        and emits the array.
         """
-        # Ensure there's a background to draw on
         if not self.background_pixmap:
             return
 
-        # 1. Create a fresh copy of the background to avoid modifying the original
-        flattened_pixmap = self.background_pixmap.copy()
+        # 1. Create and draw on a temporary QImage
+        w, h = self.background_pixmap.width(), self.background_pixmap.height()
+        temp_image = QImage(w, h, QImage.Format_Grayscale8)
 
-        # 2. Use QPainter to draw directly onto the new pixmap
-        painter = QPainter(flattened_pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # 3. Draw each completed polygon onto the pixmap
+        painter = QPainter(temp_image)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.drawPixmap(0, 0, self.background_pixmap)
         for poly in self.completed_polygons:
-            color = poly['color']
-            painter.setBrush(color)
-            # For flattening, a thin pen is usually best
-            painter.setPen(QPen(color, 1))
+            painter.setBrush(poly['color'])
+            painter.setPen(QPen(poly['color'], 1))
             painter.drawPolygon(poly['points'])
-
-        # 4. Finalize the drawing operations
         painter.end()
 
-        # 5. Emit the signal with the new, flattened image
-        self.image_flattened.emit(flattened_pixmap)
+        # 2. Immediately convert the QImage to a NumPy array
+        final_array = qimage_to_numpy(temp_image)
+        self.image_flattened.emit(final_array)
