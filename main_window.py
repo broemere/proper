@@ -73,7 +73,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.thresh_tab, f"Threshold")
 
         self.area_tab_left = AreaTab(self.pipeline, "left")
-        self.tabs.addTab(self.area_tab_left, f"Area 1")
+        self.tabs.addTab(self.area_tab_left, f"Area")
 
         self.tabs.setCurrentIndex(1)
         parent_layout.addWidget(self.tabs)

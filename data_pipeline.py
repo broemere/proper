@@ -310,7 +310,6 @@ class DataPipeline:
             right_img[mask] = clamped[mask]
         return left_img, right_img
 
-
     def paste_thresh_blobs(self, left_img, right_img):
         if self.left_thresh_blobs is not None:
             mask = (self.left_thresh_blobs != 127)
@@ -319,3 +318,12 @@ class DataPipeline:
             mask = (self.right_thresh_blobs != 127)
             right_img[mask] = self.right_thresh_blobs[mask]
         return left_img, right_img
+
+    def set_known_length(self, val):
+        self.known_length = val
+        self.notify_observers('known_length', val)
+
+    def set_conversion_factor(self, val):
+        self.conversion_factor = val
+        log.info(f"Conversion factor updated: {self.conversion_factor}")
+        self.notify_observers('conversion_factor', val)

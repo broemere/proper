@@ -242,6 +242,7 @@ def label_image(signals, arr, left_right):
         log.info(f"Kernel size: {kernel_size}")
 
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
 
         # Call morphologyEx without the extra argument
         arr_opened = cv2.morphologyEx(arr, cv2.MORPH_OPEN, kernel)
