@@ -11,8 +11,8 @@ from tabs.frame_tab import FrameTab
 from widgets.file_autoloader import find_and_prompt_for_video, find_and_prompt_for_csv
 from tabs.level_tab import LevelTab
 from tabs.thresh_tab import ThreshTab
-from tabs.canvas_tab import CanvasTab
 from tabs.area_tab import AreaTab
+from tabs.thickness_tab import ThicknessTab
 
 
 class MainWindow(QMainWindow):
@@ -71,9 +71,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.level_tab, f"Level")
         self.thresh_tab = ThreshTab(self.pipeline)
         self.tabs.addTab(self.thresh_tab, f"Threshold")
-
         self.area_tab_left = AreaTab(self.pipeline, "left")
         self.tabs.addTab(self.area_tab_left, f"Area")
+        self.thickness_tab = ThicknessTab(self.pipeline)
+        self.tabs.addTab(self.thickness_tab, f"Thickness")
 
         self.tabs.setCurrentIndex(1)
         parent_layout.addWidget(self.tabs)
