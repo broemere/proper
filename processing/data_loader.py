@@ -3,6 +3,8 @@ import csv
 import numpy as np
 import cv2
 import logging
+import os
+import getpass
 
 
 log = logging.getLogger(__name__)
@@ -145,5 +147,24 @@ def load_csv(data_file):
             pressures = data[pcol]
             times = data[tcol]
 
-        data = {"t": np.arange(0, len(times)) * np.median(np.gradient(times)).tolist(), "p": pressures}
+        times_fixed = np.arange(0, len(times)) * np.median(np.gradient(times)).tolist()
+        times_rounded = [round(x, 2) for x in times_fixed]
+
+        data = {"t": times_rounded, "p": pressures}
     return data
+
+def get_system_username():
+    """
+    Returns the current system user name in a cross-platform way.
+    """
+    try:
+        # Primary method
+        return getpass.getuser()
+    except Exception:
+        # Fallbacks: Windows, Unix, etc.
+        return (
+            os.environ.get('USERNAME')
+            or os.environ.get('USER')
+            or os.environ.get('LOGNAME')
+            or None
+        )

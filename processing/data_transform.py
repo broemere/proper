@@ -321,3 +321,61 @@ def create_visual_from_labels(signals, labels, left_right, min_size=None):
         log.exception("Error in create_visual_from_labels worker!")
         signals.message.emit("Error during visualization.")
         return {'labels': labels, 'visual': None}  # Return a dict to maintain structure
+
+def convert_numpy(obj):
+    """
+    Recursively convert numpy arrays and scalars into JSON-serializable forms:
+      - ndarray → dict with keys __ndarray__, dtype, shape, data (as nested lists)
+      - numpy scalar → native Python type via .item()
+    """
+    if isinstance(obj, np.ndarray):
+        return {
+            "__ndarray__": obj.tolist(),
+            "dtype": str(obj.dtype),
+            "shape": obj.shape
+        }
+    elif isinstance(obj, np.generic):
+        # covers np.int32, np.float64, etc.
+        return obj.item()
+    elif isinstance(obj, dict):
+        return {k: convert_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy(v) for v in obj)
+    else:
+        return obj
+
+
+def restore_numpy(obj):
+    """
+    Recursively walk obj and convert back to numpy arrays when possible:
+      - If obj is a dict with "__ndarray__", build an array with the right dtype & shape.
+      - If obj is a nested list of numbers (1D/2D/3D), cast it to an ndarray.
+      - Otherwise, recurse into dicts & lists; leave other types untouched.
+    """
+    # 1) Reverse of our special-encoded ndarray
+    if isinstance(obj, dict) and "__ndarray__" in obj:
+        arr = np.array(obj["__ndarray__"], dtype=np.dtype(obj.get("dtype", None)))
+        if "shape" in obj:
+            arr = arr.reshape(obj["shape"])
+        return arr
+
+    # 2) Try to turn pure numeric lists into arrays
+    if isinstance(obj, list):
+        try:
+            arr = np.array(obj)
+            # only accept if it really is numeric and 1–3 dimensional
+            if arr.dtype.kind in ("i","u","f") and 1 <= arr.ndim <= 3:
+                return arr
+        except Exception:
+            pass
+        # otherwise, recurse into each element
+        return [restore_numpy(v) for v in obj]
+
+    # 3) Recurse into plain dicts
+    if isinstance(obj, dict):
+        return {k: restore_numpy(v) for k, v in obj.items()}
+
+    # 4) Leave everything else alone
+    return obj

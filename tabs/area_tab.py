@@ -135,8 +135,10 @@ class AreaTab(QWidget):
         visual_pixmap = numpy_to_qpixmap(visual_array)
         if left_right == "left":
             self.area_widget1.set_data(visual_pixmap, labels_array)
+            self._center_active_tab(0)
         else:
             self.area_widget2.set_data(visual_pixmap, labels_array)
+            self._center_active_tab(1)
 
     def refresh_table(self, new_factor):
         """

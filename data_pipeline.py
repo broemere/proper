@@ -1,7 +1,11 @@
-from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels
+from difflib import restore
+
+from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy
 from processing.data_loader import load_csv, frame_loader
 import numpy as np
 import logging
+import json
+from config import APP_VERSION
 
 log = logging.getLogger(__name__)
 
@@ -32,10 +36,9 @@ class DataPipeline:
         self.conversion_factor = 1
         self._observers = {}
         self.task_manager = None
+        self.VERSION = APP_VERSION
         self.__dict__.update(settings)
 
-        self.scale_frame = 21
-        self.scale_image: np.ndarray = None
         self.left_image: np.ndarray = None
         self.right_image: np.ndarray = None
 
@@ -105,21 +108,22 @@ class DataPipeline:
 
     # def load_video_file(self, signals):
     #     frame_loader(signals, self.video, [self.trim_start, self.final_index])
-    def load_video_file(self, file_path: str):
+    def load_video_file(self, file_path: str, index=None):
         self.video = file_path
-        self.scale_frame = int((self.trim_stop + self.trim_start) / 2)
+        if index is None:
+            initial_frame = self.trim_start
 
         #frame_loader(None, self.video, [middle_frame])
         self.task_manager.queue_task(
             frame_loader,  # The function to run
             self.video,  # This will be the 'vid_file' argument
-            [self.scale_frame],  # This will be the 'frame_indices' argument
+            [initial_frame],  # This will be the 'frame_indices' argument
             True,
-            on_result=self.scale_frame_loaded # Optional: a method in DataPipeline to handle the result
+            on_result=self.initial_frame_loaded # Optional: a method in DataPipeline to handle the result
         )
         #self.notify_observers('video', None)
 
-    def scale_frame_loaded(self, result: dict):
+    def initial_frame_loaded(self, result: dict):
         """
         Callback function executed when the frame_loader task is complete.
         'result' is the dictionary of NumPy arrays returned by frame_loader.
@@ -135,14 +139,15 @@ class DataPipeline:
         # Example: Get the first (and likely only) frame from the result.
         it = iter(result)
         first_frame_index = next(it)
-        self.scale_image = result[first_frame_index]
-        if self.scale_image is None:
-            log.error("Did not receive scale frame")
+        self.left_image = result[first_frame_index]
+        if self.left_image is None:
+            log.error("Did not receive left frame")
         # THE MOST IMPORTANT STEP: Notify the UI that new data is ready!
-        self.notify_observers('scale_image', self.scale_image)
+        self.notify_observers('left_image', self.left_image)
         self.frame_count = next(it)
         log.info(f"Frame count found: {self.frame_count}")
         self.notify_observers('frame_count', self.frame_count)
+        self.level_update()
 
     def load_left_frame(self, index=None):
         if index is None:
@@ -183,17 +188,6 @@ class DataPipeline:
         self.right_image_user = None
         self.notify_observers('right_image', self.right_image)
         self.level_update()
-
-    def set_images(self, image_array_first: np.ndarray, image_array: np.ndarray):
-        """Store the original frame and initialize transformed_image to match."""
-        self.baseline_image_first = image_array_first.copy()
-        self.transformed_image_first = image_array_first.copy()
-        self.threshed_image_first = image_array_first.copy()
-        self.baseline_image = image_array.copy()
-        self.transformed_image = image_array.copy()
-        self.threshed_image = image_array.copy()
-        self.notify_observers('bcimage', [self.transformed_image_first, self.transformed_image])
-        self.notify_observers('thimage', [self.threshed_image_first, self.threshed_image])
 
     def apply_leveling(self):
         """Recompute transformed_image from baseline_image using current self.brightness and self.contrast (0–100)"""
@@ -327,3 +321,113 @@ class DataPipeline:
         self.conversion_factor = val
         log.info(f"Conversion factor updated: {self.conversion_factor}")
         self.notify_observers('conversion_factor', val)
+
+    def get_state(self, debug_json=False):
+        """
+        Collects all serializable attributes into a dictionary for saving.
+
+        This method handles the conversion of non-serializable objects (like QPointF)
+        into a format that can be pickled.
+        """
+        # Start with a dictionary of all of the object's attributes
+        state = vars(self).copy()
+
+        # --- Data Conversion and Exclusion ---
+        # 1. Exclude any attributes that cannot or should not be saved.
+        state.pop('task_manager', None)
+        state.pop('_observers', None)
+        state.pop('left_leveled', None)
+        state.pop('right_leveled', None)
+        state.pop('left_threshed', None)
+        state.pop('right_threshed', None)
+        state.pop('left_threshed_old', None)
+        state.pop('right_threshed_old', None)
+
+        # 2. Convert any non-serializable objects into a savable format.
+        # Here, we convert the list of QPointF objects into a list of tuples.
+        #if 'key_locations' in state and state['key_locations']:
+            # This list comprehension creates a new list of simple (x, y) tuples
+        #    state['key_locations'] = [(p.x, p.y) for p in state['key_locations']]
+
+        state = convert_numpy(state)
+
+        if not debug_json:
+            print("\n--- Running JSON Serialization Check ---")
+            for key, value in state.items():
+                try:
+                    # this will raise TypeError (or OverflowError) if not serializable
+                    json.dumps(value)
+                except (TypeError, OverflowError) as e:
+                    print(f"[JSON SERIALIZATION FAILED] key='{key}':")
+                    print(f"  • Type : {type(value).__name__}")
+                    print(f"  • Value: {value!r}")
+                    print(f"  • Error: {e}")
+            print("--- Debug Check Complete ---\n")
+
+        log.info(f"Analysis state compiled")
+        self.notify_observers('state_dict', state)
+
+        print("\n--- JSON Size Analysis (per key) ---")
+        sizes = {}
+        for key, value in state.items():
+            try:
+                j = json.dumps(value)
+                size_bytes = len(j.encode('utf-8'))
+                sizes[key] = size_bytes
+            except Exception:
+                sizes[key] = None
+        # Sort descending by size (None last)
+        for key, sz in sorted(sizes.items(),
+                              key=lambda kv: (kv[1] is None, kv[1]),
+                              reverse=True):
+            if sz is None:
+                print(f"{key:30s}: <failed to serialize>")
+            else:
+                print(f"{key:30s}: {sz/1e6:8.3f} MB")
+        print("--- Size Analysis Complete ---\n")
+
+        return state
+
+    def set_state(self, state_dict):
+        """
+        Restores the object's state from a dictionary (loaded from a file).
+
+        This method handles the reverse conversion of data back into its
+        original object representation (e.g., tuples back to QPointF).
+        """
+        # First, convert data back to its special object format
+        #if 'key_locations' in state_dict and state_dict['key_locations']:
+        #    state_dict['key_locations'] = [QPointF(x, y) for x, y in state_dict['key_locations']]
+
+        # Update the object's attributes with the values from the dictionary
+        for key, value in state_dict.items():
+            setattr(self, key, value)
+
+        print("\n--- Pipeline state has been restored ---")
+
+    def load_session(self, state_dict):
+
+        print("Loaded session!")
+        fixed_dict = restore_numpy(state_dict)
+        for k, v in fixed_dict.items():
+            setattr(self, k, v)
+            print(k)
+        self.refresh_session()
+
+    def refresh_session(self):
+        self.update_pipeline()
+        self.notify_observers('conversion_factor', self.conversion_factor)
+        self.notify_observers('author', self.author)
+        self.notify_observers('left_image', self.left_image)
+        self.notify_observers('right_image', self.right_image)
+        self.notify_observers('frame_count', self.frame_count)
+        self.level_update()
+        self.segment_image(self.left_threshed, "left")
+        self.segment_image(self.right_threshed, "right")
+        self.left_threshed_old = self.left_threshed.copy()
+        self.right_threshed_old = self.right_threshed.copy()
+
+    def on_author_changed(self, new_author):
+        self.author = new_author
+        print(self.author)
+

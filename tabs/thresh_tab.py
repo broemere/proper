@@ -94,7 +94,7 @@ class ThreshTab(QWidget):
             mask = (image_array != 127)
             self.pipeline.left_thresh_blobs[mask] = image_array[mask]
         else:
-            self.pipeline.left_thresh_blobs = image_array
+            self.pipeline.left_thresh_blobs = image_array.astype(np.uint8)
         self.pipeline.apply_thresh()
         self.pipeline.left_threshed_old = self.pipeline.left_threshed.copy()
         self.pipeline.segment_image(self.pipeline.left_threshed, "left")
@@ -106,7 +106,7 @@ class ThreshTab(QWidget):
             mask = (image_array != 127)
             self.pipeline.right_thresh_blobs[mask] = image_array[mask]
         else:
-            self.pipeline.right_thresh_blobs = image_array
+            self.pipeline.right_thresh_blobs = image_array.astype(np.uint8)
         self.pipeline.apply_thresh()
         self.pipeline.right_threshed_old = self.pipeline.right_threshed.copy()
         self.pipeline.segment_image(self.pipeline.right_threshed, "right")

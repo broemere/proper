@@ -7,6 +7,7 @@ from PySide6.QtGui import  QPixmap, QImage, QIcon
 from data_pipeline import DataPipeline
 import numpy as np
 from widgets.scale_widget import ScaledLineCanvas
+from processing.data_transform import numpy_to_qpixmap
 
 
 class ScaleTab(QWidget):
@@ -14,15 +15,15 @@ class ScaleTab(QWidget):
     def __init__(self, pipeline: DataPipeline, parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
-        self.pixel_length = 0.0  # Store pixel length internally
+        self.pipeline.pixel_length = 0.0  # Store pixel length internally
         self.init_ui()
         self._has_been_shown = False  # A flag to prevent unnecessary reloads
-        self.pipeline.register_observer("scale_image", self._show_scale_image)
+        self.pipeline.register_observer("left_image", self._show_scale_image)
 
     def showEvent(self, event):
         super().showEvent(event)
         # Refresh from pipeline if an image is already available
-        current_image = self.pipeline.scale_image
+        current_image = self.pipeline.left_image
         if current_image is not None:
             self._show_scale_image(current_image)
             self._sync_ui_from_pipeline()
@@ -136,14 +137,13 @@ class ScaleTab(QWidget):
 
     def _show_scale_image(self, img_array: np.ndarray):
         """Convert numpy array to QPixmap and set it as the canvas background."""
-        h, w = img_array.shape[:2]
-        qimg = QImage(img_array.data, w, h, w, QImage.Format_Grayscale8)
-        self.line_canvas.set_background(QPixmap.fromImage(qimg))
+        pixmap = numpy_to_qpixmap(img_array)
+        self.line_canvas.set_background(pixmap)
 
     def _reload_base_image(self):
         """Fetches the original image from the pipeline and resets the canvas."""
-        if self.pipeline.scale_image is not None:
-            self._show_scale_image(self.pipeline.scale_image)
+        if self.pipeline.left_image is not None:
+            self._show_scale_image(self.pipeline.left_image)
 
     # --- Central Calculation Logic ---
 
@@ -157,8 +157,8 @@ class ScaleTab(QWidget):
         known_length = self.known_length_spin.value()
         new_factor = 0.0
 
-        if known_length > 0 and self.pixel_length > 0:
-            new_factor = self.pixel_length / known_length
+        if known_length > 0 and self.pipeline.pixel_length > 0:
+            new_factor = self.pipeline.pixel_length / known_length
 
         self.conversion_label.setText(f"{new_factor:.4f}")
         self.pipeline.set_conversion_factor(new_factor)
@@ -203,7 +203,7 @@ class ScaleTab(QWidget):
     def _on_line_completed(self, length_px: float):
         """Handles new line length from the canvas."""
         if self.manual_mode_check.isChecked(): return
-        self.pixel_length = length_px
+        self.pipeline.pixel_length = length_px
         self.pixel_label.setText(f"{length_px:.2f}")
         self._update_conversion_factor()
 
