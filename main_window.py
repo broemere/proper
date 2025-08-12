@@ -1,5 +1,5 @@
 import logging
-from PySide6.QtCore import QSettings, Slot, Qt
+from PySide6.QtCore import QSettings, Slot, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog, QLineEdit, QHBoxLayout
 from config import APP_NAME, SAVE_FILETYPE
@@ -305,34 +305,48 @@ class MainWindow(QMainWindow):
         Callback function executed after the load task is completed.
         Creates a new tab and loads the session state into its pipeline.
         """
-        if result and 'state' in result and 'file_path' in result:
-            state = result['state']
-            file_path = result['file_path']
-            log.info(f"Successfully loaded session from {file_path}. Creating new tab.")
-
-            # Create a new tab but don't give it focus immediately
-            new_tab_index = self.add_new_super_tab(unfocus=True)
-            new_tab_widget = self.super_tabs.widget(new_tab_index)
-
-            # Set the tab name to the filename
-            file_name = os.path.splitext(os.path.basename(file_path))[0]
-            self.super_tabs.setTabText(new_tab_index, file_name)
-
-            # Load the state into the new tab's pipeline
-            try:
-                new_tab_widget.pipeline.load_session(state)
-                # Now, switch to the fully loaded tab
-                self.super_tabs.setCurrentIndex(new_tab_index)
-                #self.status_bar.update_status(f"Loaded session {file_name}", 5000)
-                log.info(f"State loaded into new tab: '{file_name}'")
-            except Exception as e:
-                log.exception("Failed to load state into the new session's pipeline.")
-                QMessageBox.critical(self, "Load Error", f"Could not apply the loaded session state:\n{e}")
-                # Clean up the failed tab
-                self.super_tabs.removeTab(new_tab_index)
-        else:
+        if not (result and 'state' in result and 'file_path' in result):
             log.warning("Load task completed, but failed. See logs for details.")
-            #self.status_bar.update_status("Load failed.", 5000)
+            # self.status_bar.update_status("Load failed.", 5000)
+            return
+        state = result['state']
+        file_path = result['file_path']
+        log.info(f"Successfully loaded session from {file_path}. Creating new tab.")
+
+        # Create a new tab but don't give it focus immediately
+        new_tab_index = self.add_new_super_tab(unfocus=True)
+        new_tab_widget = self.super_tabs.widget(new_tab_index)
+
+        # Set the tab name
+        file_name = os.path.splitext(os.path.basename(file_path))[0]
+        self.super_tabs.setTabText(new_tab_index, file_name)
+
+        # --- THE FIX ---
+        # Instead of loading the state immediately, schedule it to run
+        # after the event loop has had a chance to fully create the new tab.
+        QTimer.singleShot(0, lambda: self._finish_loading_state(new_tab_widget, state, file_name))
+
+        QTimer.singleShot(0, lambda: self._finish_loading_state(new_tab_widget, state, file_name))
+
+    def _finish_loading_state(self, new_tab_widget, state, file_name):
+        """
+        This method runs on the next event loop cycle, ensuring all widgets
+        in the new_tab_widget are fully initialized before being accessed.
+        """
+        try:
+            new_tab_widget.pipeline.load_session(state)
+            # Now that it's loaded, we can switch to the tab
+            new_tab_index = self.super_tabs.indexOf(new_tab_widget)
+            self.super_tabs.setCurrentIndex(new_tab_index)
+            # self.status_bar.update_status(f"Loaded session {file_name}", 5000)
+            log.info(f"State loaded into new tab: '{file_name}'")
+        except Exception as e:
+            log.exception("Failed to load state into the new session's pipeline.")
+            QMessageBox.critical(self, "Load Error", f"Could not apply the loaded session state:\n{e}")
+            # Clean up the failed tab
+            new_tab_index = self.super_tabs.indexOf(new_tab_widget)
+            if new_tab_index != -1:
+                self.super_tabs.removeTab(new_tab_index)
 
     def closeEvent(self, event):
         """Saves window geometry upon closing the application."""

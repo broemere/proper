@@ -5,6 +5,7 @@ from processing.data_loader import load_csv, frame_loader
 import numpy as np
 import logging
 import json
+import os
 from config import APP_VERSION
 
 log = logging.getLogger(__name__)
@@ -271,6 +272,7 @@ class DataPipeline:
         if result is not None:
             labels, left_right = result
             log.info("Received segmentation. Queueing visualization task.")
+
             self.task_manager.queue_task(
                 create_visual_from_labels,
                 labels,
@@ -409,13 +411,16 @@ class DataPipeline:
 
         print("Loaded session!")
         fixed_dict = restore_numpy(state_dict)
+        print("Setting variables...")
         for k, v in fixed_dict.items():
             setattr(self, k, v)
-            print(k)
+            print(k, v)
+        print("Refreshing...")
         self.refresh_session()
 
     def refresh_session(self):
         self.update_pipeline()
+        print("Plot data restored")
         self.notify_observers('conversion_factor', self.conversion_factor)
         self.notify_observers('author', self.author)
         self.notify_observers('left_image', self.left_image)

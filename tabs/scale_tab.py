@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QDoubleSpinBox, QSizePolicy,
     QStyle,  QButtonGroup, QStackedWidget, QCheckBox
 )
-from PySide6.QtGui import  QPixmap, QImage, QIcon
+from PySide6.QtGui import QIcon
 from data_pipeline import DataPipeline
 import numpy as np
 from widgets.scale_widget import ScaledLineCanvas

@@ -14,14 +14,44 @@ class PlotTab(QWidget):
         self.pipeline.register_observer("transformed", self._data_transformed)
 
     def init_ui(self):
+        # --- AESTHETIC TWEAK: Enable antialiasing for smoother lines ---
+        pg.setConfigOptions(antialias=True)
+
         tab_layout = QVBoxLayout(self)
+
         # Transformed Data Plot
-        self.data_plot = self._create_plot_widget("Zeroed and Smoothed Data")
+        self.data_plot = self._create_plot_widget("<b>Zeroed and Smoothed Data</b>")  # Title is now bold
         self.data_plot.addLegend()
-        self.zero_curve = self.data_plot.plot([], [], pen=pg.mkPen(self._fg_color(), width=1), symbol='o', name="Zeroed")
-        self.smooth_curve = self.data_plot.plot([], [], pen=pg.mkPen(self._fg_color(), width=2), name="Smoothed")
-        self.data_plot.setLabel('left', 'Pressure [mmHg]')
-        self.data_plot.setLabel('bottom', 'Time [min]')
+
+        # --- AESTHETIC TWEAK: Define new colors for clarity ---
+        # A vibrant green for the main (smoothed) curve
+        smoothed_color = QColor("#16A085")  # A nice green shade
+        # A semi-transparent version of the foreground color for the background curve
+        unsmoothed_color = QColor(self._fg_color())
+        unsmoothed_color.setAlpha(100)  # Makes it less prominent
+
+        # --- PLOT STYLE CHANGE: Unsmoothed curve is now a thin, semi-transparent line ---
+        # Removed 'symbol' to get rid of individual points.
+        self.zero_curve = self.data_plot.plot(
+            [], [],
+            pen=pg.mkPen(unsmoothed_color, width=1.5),
+            name="Zeroed"
+        )
+
+        # --- PLOT STYLE CHANGE: Smoothed curve is thicker and green ---
+        self.smooth_curve = self.data_plot.plot(
+            [], [],
+            pen=pg.mkPen(smoothed_color, width=2.5),
+            name="Smoothed"
+        )
+
+        # --- Z-ORDERING: Explicitly set the smoothed curve to be on top ---
+        self.zero_curve.setZValue(0)  # Draw this curve first (in the back)
+        self.smooth_curve.setZValue(1)  # Draw this curve second (on top)
+
+        # Labels are now bold
+        self.data_plot.setLabel('left', "<b>Pressure [mmHg]</b>")
+        self.data_plot.setLabel('bottom', "<b>Time [min]</b>")
         tab_layout.addWidget(self.data_plot)
 
         # --- Controls centered below charts ---
@@ -88,7 +118,7 @@ class PlotTab(QWidget):
 
     def _create_plot_widget(self, title: str) -> pg.PlotWidget:
         """Helper to create a theme-aware plot with zero lines"""
-        plot = pg.PlotWidget(title=title)
+        plot = pg.PlotWidget(title=title, color=self._fg_color(), size='12pt')
         plot.setBackground(self._bg_color())
         # Configure axes
         for axis in ('bottom', 'left'):
@@ -96,8 +126,8 @@ class PlotTab(QWidget):
             ax.setPen(pg.mkPen(self._fg_color()))
             ax.setTextPen(self._fg_color())
         # Zero lines
-        plot.addItem(pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen(self._fg_color())))
-        plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen(self._fg_color())))
+        plot.addItem(pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen(color=self._fg_color(), style=Qt.DotLine)))
+        plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen(color=self._fg_color(), style=Qt.DotLine)))
         return plot
 
     def _bg_color(self) -> str:

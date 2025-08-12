@@ -251,6 +251,7 @@ def label_image(signals, arr, left_right):
         labels = label(arr_opened, background=0, connectivity=2)
 
         log.info("Worker finished: label_image task successful.")
+
         return [labels, left_right]
 
     except Exception:
@@ -297,14 +298,18 @@ def create_visual_from_labels(signals, labels, left_right, min_size=None):
                     signals.progress.emit(pct)
 
         signals.message.emit("Calculating blob properties...")
-        # Define which properties you want to extract
-        properties_to_measure = [
-        'label', 'area', 'centroid', 'perimeter', 'solidity', 'extent',
-        'major_axis_length', 'minor_axis_length', 'eccentricity',
-        'orientation', 'moments_hu'
-        ]
-        # Use regionprops_table for efficient calculation on the filtered array
-        props = regionprops_table(filtered_labels, properties=properties_to_measure)
+        if n_labels > 0:
+            # Only call regionprops_table if there are labels to analyze
+            properties_to_measure = [
+                'label', 'area', 'centroid', 'perimeter', 'solidity', 'extent',
+                'major_axis_length', 'minor_axis_length', 'eccentricity',
+                'orientation', 'moments_hu'
+            ]
+            props = regionprops_table(filtered_labels, properties=properties_to_measure)
+        else:
+            # If no labels, create an empty dictionary to maintain data structure
+            log.info("No viable labels found after filtering. Skipping regionprops.")
+            props = {} # or an empty pandas DataFrame if you expect one
 
         signals.message.emit("Generating color image...")
         color_image = label2rgb(filtered_labels, bg_label=0, bg_color=(0, 0, 0))

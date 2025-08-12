@@ -1,11 +1,38 @@
 import traceback
+import uuid
 from PySide6.QtCore import QObject, Signal, QRunnable, Slot, QThreadPool
 import logging
 
 log = logging.getLogger(__name__)
 
+
+class WorkerSignals(QObject):
+    result = Signal(str, object)
+    error = Signal(str, tuple)
+    progress = Signal(int)
+    message = Signal(str)
+
+
+class Worker(QRunnable):
+    def __init__(self, task_id, fn, *args, **kwargs):
+        super().__init__()
+        self.task_id = task_id
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = WorkerSignals()
+
+    @Slot()
+    def run(self):
+        try:
+            result = self.fn(self.signals, *self.args, **self.kwargs)
+            self.signals.result.emit(self.task_id, result)
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.signals.error.emit(self.task_id, (e, tb))
+
+
 class TaskManager(QObject):
-    # Define signals for the rest of the app to listen to
     status_updated = Signal(str)
     progress_updated = Signal(int)
     batch_finished = Signal()
@@ -15,119 +42,83 @@ class TaskManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pool = QThreadPool.globalInstance()
-        self.batch_queue = []  # list of (fn, args, kwargs)
+        self.task_queue = []
+        self.task_callbacks = {}
         self.cancelled = False
-        self._batch_running = False
-        self.active_workers = set()
+        # --- FINAL FIX: The robust state flag to prevent race conditions ---
+        self.is_running = False
+
         log.info("Task Manager initialized.")
 
     def queue_task(self, fn, *args, on_result=None, **kwargs):
-        """Add a job at the end of the queue."""
         log.info(f"Queueing task: {fn.__name__}")
-        was_idle = not self._batch_running
-        self.batch_queue.append((fn, args, kwargs, on_result))
-        # if we weren’t already running, go ahead and start
-        if was_idle:
-            self._batch_running = True
+        task = (fn, args, kwargs, on_result)
+        self.task_queue.append(task)
+
+        # --- FINAL FIX: Check our own flag, not the unreliable pool count ---
+        if not self.is_running:
+            # Set the flag immediately to "lock" the queue
+            self.is_running = True
             self.cancelled = False
-            #self.btn_cancel.setEnabled(True)
             self._run_next()
 
     def cancel_batch(self):
-        # request cancellation; will stop after current task finishes
-        log.warning("Batch cancellation requested.")
-        self.cancelled = True
-        self.batch_cancelled()
-        #self.btn_cancel.setEnabled(False)
-        #self.status.setText('Canceling…')
+        if self.is_running:
+            log.warning("Batch cancellation requested. Will stop after current task.")
+            self.cancelled = True
+            self.batch_cancelled.emit()
 
     def _run_next(self):
-        # if user hit cancel, or no more jobs
-        if self.cancelled or not self.batch_queue:
-            # if "error" in self.status.text().lower():
-            #     self.status.setText(
-            #         f"Cancelled ~ {self.status.text()}" if self.cancelled else f"Ready ~ {self.status.text()}")
-            # else:
-            #     self.status.setText("Cancelled" if self.cancelled else "Ready")
-            #self.progress.setValue(0)
-            #self.btn_cancel.setEnabled(False)
-            log.info("Batch finished or cancelled.")
-            self._batch_running = False
+        if self.cancelled:
+            log.warning("Batch execution halted due to cancellation.")
+            self.task_queue.clear()
+            self.is_running = False  # Unlock the queue
+            return
+
+        if not self.task_queue:
+            log.info("Task queue is empty. Batch finished.")
+            # --- FINAL FIX: Unlock the queue only when it's truly empty ---
+            self.is_running = False
             self.batch_finished.emit()
             return
 
-        fn, args, kwargs, on_result = self.batch_queue.pop(0)
-        worker = Worker(fn, *args, **kwargs)
+        fn, args, kwargs, on_result = self.task_queue.pop(0)
 
-        # connect signals
-        #worker.signals.started.connect(lambda: self.status.setText("Starting…"))
+        task_id = str(uuid.uuid4())
+        if on_result:
+            self.task_callbacks[task_id] = on_result
+
+        worker = Worker(task_id, fn, *args, **kwargs)
+
         worker.signals.message.connect(self.status_updated)
         worker.signals.progress.connect(self.progress_updated)
+        worker.signals.result.connect(self._on_result)
         worker.signals.error.connect(self._on_error)
 
-        # connect result to either custom or generic handler
-        if on_result:
-            worker.signals.result.connect(on_result)
-        else:
-            worker.signals.result.connect(self._on_result)
-
-        # Connect the finished signal to new cleanup slot
-        worker.signals.finished.connect(lambda w=worker: self._on_worker_finished(w))
-        # when this one finishes, run the next in queue
-        worker.signals.finished.connect(self._run_next)
-        self.active_workers.add(worker)
-        log.info(f"Starting worker for {fn.__name__}. Active workers: {len(self.active_workers)}")
+        log.info(f"Starting worker for {fn.__name__} (Task ID: {task_id})")
         self.pool.start(worker)
 
-    @Slot()
-    def _on_worker_finished(self, finished_worker):
-        self.active_workers.discard(finished_worker)
-        log.info(f"Worker for {finished_worker.fn.__name__} finished. Active workers: {len(self.active_workers)}")
+    @Slot(str, object)
+    def _on_result(self, task_id, result):
+        log.info(f"Task {task_id} finished successfully.")
 
-    def _on_error(self, err_tb):
+        callback = self.task_callbacks.pop(task_id, None)
+        if callback:
+            try:
+                callback(result)
+            except Exception as e:
+                log.error(f"Error in 'on_result' callback for task {task_id}: {e}", exc_info=True)
+
+        self._run_next()
+
+    @Slot(str, tuple)
+    def _on_error(self, task_id, err_tb):
         exc, tb_str = err_tb
-        logging.error(f"A worker task failed!\n{tb_str}")
-        self.error_occurred.emit((exc, tb_str))
+        log.error(f"Worker task {task_id} failed!\n{tb_str}")
+
+        self.error_occurred.emit(err_tb)
         self.status_updated.emit(f"Error: {exc}")
 
-    def _on_result(self, result):
-        # handle generic results if you like
-        pass
+        self.task_callbacks.pop(task_id, None)
 
-
-class Worker(QRunnable):
-    """
-    QRunnable wrapper that:
-      • calls any fn(signals, *args, **kwargs)
-      • catches & emits exceptions
-      • emits started / finished / result / error
-    """
-    def __init__(self, fn, *args, **kwargs):
-        super().__init__()
-        self.fn      = fn
-        self.args    = args
-        self.kwargs  = kwargs
-        self.signals = WorkerSignals()
-
-    @Slot()
-    def run(self):
-        self.signals.started.emit()
-        try:
-            # pass the signals object first,
-            # so your function can do:     signals.progress.emit(...)
-            result = self.fn(self.signals, *self.args, **self.kwargs)
-        except Exception as e:
-            tb = traceback.format_exc()
-            self.signals.error.emit((e, tb))
-        else:
-            self.signals.result.emit(result)
-        finally:
-            self.signals.finished.emit()
-
-class WorkerSignals(QObject):
-    started  = Signal()
-    finished = Signal()
-    error    = Signal(tuple)           # (exc, traceback_str)
-    result   = Signal(object)          # what your function returns
-    progress = Signal(int)             # 0–100
-    message  = Signal(str)             # any status text
+        self._run_next()
