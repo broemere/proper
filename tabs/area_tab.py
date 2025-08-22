@@ -1,15 +1,12 @@
-from PySide6.QtCore import Qt, Signal, QPointF, QRect
+from PySide6.QtCore import Qt, Signal, QEvent, Slot
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy, QScrollArea,
-    QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout, QButtonGroup, QTabWidget, QTableWidget, QHeaderView, QTableWidgetItem
+    QTabWidget, QTableWidget, QHeaderView, QTableWidgetItem
 )
-from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen, QCursor, QIcon
 from data_pipeline import DataPipeline
 import numpy as np
-from processing.resource_loader import load_cursor
 from widgets.area_widget import AreaAnalysisWidget
 from processing.data_transform import numpy_to_qpixmap
-from collections import deque
 import logging
 log = logging.getLogger(__name__)
 
@@ -21,19 +18,19 @@ class AreaTab(QWidget):
         self.pipeline = pipeline
         self.segmented_result = None
         self._has_been_shown = False
+        self._is_state_synced = False
         self.pipeline.left_threshed_old = None
         self.pipeline.right_threshed_old = None
-        self.pipeline.MAX_MARKERS = 5
         self.init_ui()
+        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
         self.pipeline.register_observer("visualization_ready", self.on_visualization_ready)
         self.pipeline.register_observer("conversion_factor", self.refresh_table)
+        self.pipeline.register_observer("area_data_updated", self.on_area_data_updated)
 
-        self.data_store1 = deque(maxlen=5)
-        self.data_store2 = deque(maxlen=5)
 
     def init_ui(self):
-        self.area_widget1 = AreaAnalysisWidget(self.pipeline.MAX_MARKERS)
-        self.area_widget2 = AreaAnalysisWidget(self.pipeline.MAX_MARKERS)
+        self.area_widget1 = AreaAnalysisWidget()
+        self.area_widget2 = AreaAnalysisWidget()
         layout = QHBoxLayout(self)
 
         self.tabs = QTabWidget()
@@ -88,11 +85,12 @@ class AreaTab(QWidget):
         total_height = (header_height + rows_height + self.table1.frameWidth() * 2) * 2 + table_layout.spacing()
         table_container.setFixedHeight(total_height)
 
+        # Connect the click signal directly to a handler that calls the pipeline
         self.area_widget1.area_clicked.connect(
-            lambda data: self.handle_area_update(self.table1, self.data_store1, data)
+            lambda props: self.pipeline.add_area_data('left', props)
         )
         self.area_widget2.area_clicked.connect(
-            lambda data: self.handle_area_update(self.table2, self.data_store2, data)
+            lambda props: self.pipeline.add_area_data('right', props)
         )
 
     def showEvent(self, event):
@@ -126,6 +124,59 @@ class AreaTab(QWidget):
             self.pipeline.right_threshed_old = self.pipeline.right_threshed.copy()
             self.pipeline.segment_image(self.pipeline.right_threshed, "right")
 
+        if self.isVisible() and not self._is_state_synced:
+            self._sync_ui_to_pipeline()
+
+    @Slot()
+    def _on_state_loaded(self):
+        """Marks the UI as dirty when a new state is loaded."""
+        print("AREA TAB: Received 'state_loaded' notification.")
+        self._is_state_synced = False
+        if self.isVisible():
+            self._sync_ui_to_pipeline()
+
+    def _sync_ui_to_pipeline(self):
+        """Pulls all necessary state from the pipeline to fully refresh the tab."""
+        print("AREA TAB: Synchronizing UI to pipeline state.")
+
+        # 1. Update the left image and table
+        if self.pipeline.left_image is not None:
+            # Note: 'segmented_result' might not be available on load,
+            # we'll need to regenerate it if we want the outlines.
+            # For now, let's just show the thresholded image.
+            pixmap = numpy_to_qpixmap(self.pipeline.left_threshed)
+            #self.area_widget1.set_data(pixmap, self.pipeline.left_threshed)
+            self._update_table_ui(self.table1, self.pipeline.area_data_left)
+
+        # 2. Update the right image and table
+        if self.pipeline.right_image is not None:
+            pixmap = numpy_to_qpixmap(self.pipeline.right_threshed)
+            #self.area_widget2.set_data(pixmap, self.pipeline.right_threshed)
+            self._update_table_ui(self.table2, self.pipeline.area_data_right)
+
+        self._is_state_synced = True
+
+    @Slot(str)
+    def on_area_data_updated(self, left_right: str):
+        """
+        This single slot handles updates from the pipeline for both sides.
+        It refreshes the UI with the new, authoritative data.
+        """
+        if left_right == 'left':
+            data = self.pipeline.area_data_left
+            pixmap = self.area_widget1.display_pixmap # Reuse existing pixmap
+            labels = self.area_widget1.labeled_array # Reuse existing array
+            if pixmap and labels is not None:
+                self.area_widget1.set_data(pixmap, labels, data)
+                self._update_table_ui(self.table1, data)
+        else:
+            data = self.pipeline.area_data_right
+            pixmap = self.area_widget2.display_pixmap
+            labels = self.area_widget2.labeled_array
+            if pixmap and labels is not None:
+                self.area_widget2.set_data(pixmap, labels, data)
+                self._update_table_ui(self.table2, data)
+
     def on_visualization_ready(self, data: dict):
         """Receives the final data dictionary and updates the analysis widget."""
         labels_array = data['labels']
@@ -134,10 +185,18 @@ class AreaTab(QWidget):
 
         visual_pixmap = numpy_to_qpixmap(visual_array)
         if left_right == "left":
-            self.area_widget1.set_data(visual_pixmap, labels_array)
+            self.area_widget1.set_data(
+                numpy_to_qpixmap(data['visual']),
+                data['labels'],
+                self.pipeline.area_data_left
+            )
             self._center_active_tab(0)
         else:
-            self.area_widget2.set_data(visual_pixmap, labels_array)
+            self.area_widget2.set_data(
+                numpy_to_qpixmap(data['visual']),
+                data['labels'],
+                self.pipeline.area_data_right
+            )
             self._center_active_tab(1)
 
     def refresh_table(self, new_factor):
@@ -146,67 +205,56 @@ class AreaTab(QWidget):
         when the conversion factor changes.
         """
         log.info(f"Refresh triggered by new factor: {new_factor}")
-        self._update_table_ui(self.table1, self.data_store1)
-        self._update_table_ui(self.table2, self.data_store2)
+        self._update_table_ui(self.table1, self.pipeline.area_data_left)
+        self._update_table_ui(self.table2, self.pipeline.area_data_right)
 
-    def _calculate_positions(self, data_store):
-        if len(data_store) != 5:
-            return {}
-        blobs = list(data_store)
-        left_blob = min(blobs, key=lambda b: b[2])
-        right_blob = max(blobs, key=lambda b: b[2])
-        top_blob = min(blobs, key=lambda b: b[3])
-        bottom_blob = max(blobs, key=lambda b: b[3])
-        all_blobs_set = {tuple(b) for b in blobs}
-        extreme_blobs_set = {tuple(left_blob), tuple(right_blob), tuple(top_blob), tuple(bottom_blob)}
-        middle_blobs_set = all_blobs_set - extreme_blobs_set
-        middle_blob_tuple = list(middle_blobs_set)[0] if middle_blobs_set else None
-        position_map = {}
-        if middle_blob_tuple:
-            position_map[middle_blob_tuple] = "Middle"
-        position_map[tuple(left_blob)] = "Left"
-        position_map[tuple(right_blob)] = "Right"
-        position_map[tuple(top_blob)] = "Top"
-        position_map[tuple(bottom_blob)] = "Bottom"
-        return position_map
 
     def _update_table_ui(self, target_table, data_store):
         """
         Refactored UI update logic. Clears and repopulates a table
         based on its data store and the current conversion factor.
         """
-        position_map = self._calculate_positions(data_store)
         target_table.clearContents()
 
-        for row_index, data in enumerate(data_store):
-            if position_map:
-                data_tuple = tuple(data)
-                position_label = position_map.get(data_tuple, "")
-                position_item = QTableWidgetItem(position_label)
-                position_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                target_table.setItem(row_index, 0, position_item)
+        blobs = data_store.values()
 
-            # Recalculate area using the current conversion factor
-            area_value = data[1] # This is the raw area
+        for row_index, props in enumerate(blobs):
+            area, cx, cy, label = props
+            position_item = QTableWidgetItem(label)
+            position_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            target_table.setItem(row_index, 0, position_item)
+
+            # ... (your area calculation logic is fine)
             try:
-                # Use the pipeline's conversion factor for calculation
-                scaled_area = area_value / (self.pipeline.conversion_factor ** 2)
+                scaled_area = area / (self.pipeline.conversion_factor ** 2)
             except (ZeroDivisionError, TypeError):
                 log.warning("Scale not set or invalid!!! Using raw area.")
-                scaled_area = area_value
+                scaled_area = area
 
             area_item = QTableWidgetItem(f"{scaled_area:.3f}")
             area_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
             target_table.setItem(row_index, 1, area_item)
 
-    def handle_area_update(self, target_table, data_store, blob_props):
-        """
-        This slot now only updates the data store and then calls the
-        reusable UI update function.
-        """
-        log.info(f"Updating table {target_table.objectName()} with data: {blob_props}")
-        data_store.append(blob_props)
-        self._update_table_ui(target_table, data_store)
+        # for row_index, data in enumerate(data_store):
+        #     if position_map:
+        #         data_tuple = tuple(data)
+        #         position_label = position_map.get(data_tuple, "")
+        #         position_item = QTableWidgetItem(position_label)
+        #         position_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+        #         target_table.setItem(row_index, 0, position_item)
+        #
+        #     # Recalculate area using the current conversion factor
+        #     area_value = data[1] # This is the raw area
+        #     try:
+        #         # Use the pipeline's conversion factor for calculation
+        #         scaled_area = area_value / (self.pipeline.conversion_factor ** 2)
+        #     except (ZeroDivisionError, TypeError):
+        #         log.warning("Scale not set or invalid!!! Using raw area.")
+        #         scaled_area = area_value
+        #
+        #     area_item = QTableWidgetItem(f"{scaled_area:.3f}")
+        #     area_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+        #     target_table.setItem(row_index, 1, area_item)
 
     def _center_active_tab(self, index):
         """

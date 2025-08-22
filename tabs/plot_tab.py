@@ -1,17 +1,21 @@
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, Slot
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QApplication
 from PySide6.QtGui import QPalette, QColor
 import pyqtgraph as pg
 from data_pipeline import DataPipeline
+import logging
+log = logging.getLogger(__name__)
 
 class PlotTab(QWidget):
 
     def __init__(self, pipeline: DataPipeline, parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
+        self._is_state_synced = False
         self.init_ui()
         self.pipeline.register_observer("raw", self._new_data_loaded)
         self.pipeline.register_observer("transformed", self._data_transformed)
+        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
 
     def init_ui(self):
         # --- AESTHETIC TWEAK: Enable antialiasing for smoother lines ---
@@ -115,6 +119,66 @@ class PlotTab(QWidget):
 
         self._hover_source = None
         self._hover_region = None
+
+    def showEvent(self, event: QEvent):
+        """This Qt event fires every time the widget is shown."""
+        # First, let the parent class do its thing
+        super().showEvent(event)
+        # If the widget is being shown and its UI is out of sync, update it now.
+        if self.isVisible() and not self._is_state_synced:
+            self._sync_ui_to_pipeline()
+
+    @Slot()
+    def _on_state_loaded(self, _):
+        """
+        Slot for the 'state_loaded' signal from the pipeline.
+        Marks the UI as dirty and triggers a sync if the tab is already visible.
+        """
+        log.info("PlotTab: Received 'state_loaded' notification.")
+        self._is_state_synced = False
+        # If the tab is already visible when the state is loaded, update immediately.
+        # Otherwise, showEvent will handle it when the user clicks on the tab.
+        if self.isVisible():
+            self._sync_ui_to_pipeline()
+
+    def _sync_ui_to_pipeline(self):
+        """Pulls the current state from the pipeline and updates all UI controls."""
+        log.info("PlotTab: Synchronizing UI controls to pipeline state.")
+
+        # Block signals to prevent feedback loops while we set values
+        self.spin_start.blockSignals(True)
+        self.spin_stop.blockSignals(True)
+        self.cb_zero.blockSignals(True)
+        self.spin_zero_window.blockSignals(True)
+        self.cb_smooth.blockSignals(True)
+        self.spin_smooth_window.blockSignals(True)
+
+        try:
+            # Update trim controls
+            self.spin_start.setMaximum(self.pipeline.length - 1)
+            self.spin_stop.setMaximum(self.pipeline.length - 1)
+            self.spin_start.setValue(self.pipeline.trim_start)
+            self.spin_stop.setValue(self.pipeline.trim_stop)
+
+            # Update zeroing controls
+            self.cb_zero.setCurrentText(self.pipeline.zeroing_method)
+            self.spin_zero_window.setValue(self.pipeline.zeroing_window)
+
+            # Update smoothing controls
+            self.cb_smooth.setCurrentText(self.pipeline.smoothing_method)
+            self.spin_smooth_window.setValue(self.pipeline.smoothing_window)
+
+            # Mark the UI as being in sync with the state
+            self._is_state_synced = True
+
+        finally:
+            # Always unblock signals
+            self.spin_start.blockSignals(False)
+            self.spin_stop.blockSignals(False)
+            self.cb_zero.blockSignals(False)
+            self.spin_zero_window.blockSignals(False)
+            self.cb_smooth.blockSignals(False)
+            self.spin_smooth_window.blockSignals(False)
 
     def _create_plot_widget(self, title: str) -> pg.PlotWidget:
         """Helper to create a theme-aware plot with zero lines"""

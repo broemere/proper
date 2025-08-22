@@ -131,6 +131,7 @@ class ScaleTab(QWidget):
 
     def _sync_ui_from_pipeline(self):
         """Update UI controls with values from the data pipeline."""
+        print("Syncing")
         self.known_length_spin.setValue(getattr(self.pipeline, "known_length", 0.0))
         self._on_canvas_mode_changed(self.line_canvas.mode)
         self._update_conversion_factor()
@@ -152,6 +153,7 @@ class ScaleTab(QWidget):
         Central method to calculate, display, and store the conversion factor.
         This is the single source of truth for the scale calculation.
         """
+        print("Updating")
         if self.manual_mode_check.isChecked():
             return
         known_length = self.known_length_spin.value()

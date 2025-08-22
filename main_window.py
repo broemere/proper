@@ -326,8 +326,6 @@ class MainWindow(QMainWindow):
         # after the event loop has had a chance to fully create the new tab.
         QTimer.singleShot(0, lambda: self._finish_loading_state(new_tab_widget, state, file_name))
 
-        QTimer.singleShot(0, lambda: self._finish_loading_state(new_tab_widget, state, file_name))
-
     def _finish_loading_state(self, new_tab_widget, state, file_name):
         """
         This method runs on the next event loop cycle, ensuring all widgets

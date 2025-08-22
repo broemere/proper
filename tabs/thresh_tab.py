@@ -1,5 +1,5 @@
 from data_pipeline import DataPipeline
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot, QEvent
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSizePolicy, QSlider, QFrame, \
     QPushButton
 from processing.data_transform import numpy_to_qpixmap
@@ -15,7 +15,9 @@ class ThreshTab(QWidget):
         self.pipeline = pipeline
         self.canvas_window1 = None
         self.canvas_window2 = None
+        self._is_state_synced = False
         self.init_ui()
+        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
         self.pipeline.register_observer("threshed", self._update_frames)
 
     def init_ui(self):
@@ -63,6 +65,33 @@ class ThreshTab(QWidget):
         tab_layout.addLayout(ctrl_row)
 
         self.t_slider.valueChanged.connect(lambda v: self._on_thresh_change(self.t_value, "threshold", v))
+
+    def showEvent(self, event: QEvent):
+        """This Qt event fires every time the widget is shown."""
+        super().showEvent(event)
+        # If the widget is being shown and its UI is out of sync, update it now.
+        if self.isVisible() and not self._is_state_synced:
+            self._sync_ui_to_pipeline()
+
+    @Slot()
+    def _on_state_loaded(self, _):
+        """Slot for the 'state_loaded' signal. Marks the UI as dirty."""
+        print("THRESH TAB: Received 'state_loaded' notification.")
+        self._is_state_synced = False
+        # Sync immediately if visible, otherwise, showEvent will handle it when the user clicks the tab.
+        if self.isVisible():
+            self._sync_ui_to_pipeline()
+
+    def _sync_ui_to_pipeline(self):
+        """Pulls the current state from the pipeline and updates all UI controls."""
+        print("THRESH TAB: Synchronizing entire UI to pipeline state.")
+        self.t_slider.blockSignals(True)
+        try:
+            self.t_value.setText(str(getattr(self.pipeline, 'threshold', 127)))
+            self.t_slider.setValue(getattr(self.pipeline, 'threshold', 127))
+            self._is_state_synced = True
+        finally:
+            self.t_slider.blockSignals(False)
 
     def _on_frame1_action(self):
         """Launches the drawing window for the first frame."""
@@ -136,3 +165,4 @@ class ThreshTab(QWidget):
         self.t_slider.setValue(127)
         self.pipeline.left_thresh_blobs = None
         self.pipeline.right_thresh_blobs = None
+        self.pipeline.apply_thresh()

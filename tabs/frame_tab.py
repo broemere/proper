@@ -1,5 +1,5 @@
 from data_pipeline import DataPipeline
-from PySide6.QtCore import Qt, Signal, QPointF, QRect, QSize, QTimer, Slot
+from PySide6.QtCore import Qt, Signal, QPointF, QRect, QSize, QTimer, Slot, QEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy,
     QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout, QButtonGroup, QSlider, QFrame
@@ -19,9 +19,10 @@ class FrameTab(QWidget):
         style = self.style()
         self._yes_pix = style.standardIcon(QStyle.SP_DialogYesButton).pixmap(16, 16)
         self._no_pix  = style.standardIcon(QStyle.SP_DialogNoButton).pixmap(16, 16)
+        self._is_state_synced = False
         self.init_ui()
-        self._has_been_shown = False  # A flag to prevent unnecessary reloads
 
+        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
         self.pipeline.register_observer("frame_count", self._update_frame_count)
         self.pipeline.register_observer("left_image", self._update_left_frame)
         self.pipeline.register_observer("right_image", self._update_right_frame)
@@ -162,6 +163,60 @@ class FrameTab(QWidget):
 
         tab_layout.addLayout(ctrl_row)
 
+    def showEvent(self, event: QEvent):
+        """This Qt event fires every time the widget is shown."""
+        super().showEvent(event)
+        # If the widget is being shown and its UI is out of sync, update it now.
+        if self.isVisible() and not self._is_state_synced:
+            self._sync_ui_to_pipeline()
+
+    @Slot()
+    def _on_state_loaded(self, _):
+        """Slot for the 'state_loaded' signal. Marks the UI as dirty."""
+        print("FRAME TAB: Received 'state_loaded' notification.")
+        self._is_state_synced = False
+        # Sync immediately if visible, otherwise, showEvent will handle it when the user clicks the tab.
+        if self.isVisible():
+            self._sync_ui_to_pipeline()
+
+    def _sync_ui_to_pipeline(self):
+        """Pulls the current state from the pipeline and updates all UI controls."""
+        print("FRAME TAB: Synchronizing entire UI to pipeline state.")
+
+        # Block signals on all controls to prevent them from firing while we set values
+        for widget in (self.left_slider, self.left_spin, self.right_slider, self.right_spin):
+            widget.blockSignals(True)
+
+        try:
+            # 1. Set the RANGE of sliders first, based on trim settings
+            start, stop = self.pipeline.trim_start, self.pipeline.trim_stop
+            for slider, spin in ((self.left_slider, self.left_spin), (self.right_slider, self.right_spin)):
+                slider.setRange(start, stop)
+                spin.setRange(start, stop)
+
+            # 2. Set the VALUE of the sliders second, using the loaded indices
+            # Use getattr to safely get the value, providing a default if it's not there
+            self.left_spin.setValue(getattr(self.pipeline, 'left_index', start))
+            self.right_spin.setValue(getattr(self.pipeline, 'right_index', stop))
+            self.left_slider.setValue(getattr(self.pipeline, 'left_index', start))
+            self.right_slider.setValue(getattr(self.pipeline, 'right_index', stop))
+
+            # 3. Update the pressure readouts for the new slider values
+            self._refresh_left_pressures(self.left_spin.value())
+            self._refresh_right_pressures(self.right_spin.value())
+
+            # 4. Update the image displays with the frames already loaded in the pipeline
+            self._update_left_frame(self.pipeline.left_image)
+            self._update_right_frame(self.pipeline.right_image)
+
+            # 5. Mark the UI as being in sync
+            self._is_state_synced = True
+
+        finally:
+            # Always unblock signals
+            for widget in (self.left_slider, self.left_spin, self.right_slider, self.right_spin):
+                widget.blockSignals(False)
+
     def _goto_left(self):
         p = self.left_goto.value()
         if self.pipeline.csv_path:
@@ -175,6 +230,7 @@ class FrameTab(QWidget):
             self.right_spin.setValue(idx+self.pipeline.trim_start)
 
     def _refresh_left_pressures(self, index: int):
+        print("FRAME TAB: refreshing left pressures", index)
         if self.pipeline.csv_path:
             new_index = index - self.pipeline.trim_start
             pre = self.pipeline.smoothed_data["p"][max(0, new_index - 3):new_index]
@@ -185,6 +241,7 @@ class FrameTab(QWidget):
             self.left_value_post.setText(", ".join(str(x) for x in post))
 
     def _refresh_right_pressures(self, index: int):
+        print("FRAME TAB: refreshing right pressures", index)
         if self.pipeline.csv_path:
             new_index = index - self.pipeline.trim_start
             pre = self.pipeline.smoothed_data["p"][max(0, new_index - 3):new_index]
@@ -195,6 +252,7 @@ class FrameTab(QWidget):
             self.right_value_post.setText(", ".join(str(x) for x in post))
 
     def _on_left_index_changed(self, new_val: int):
+        print("FRAME TAB: left_index changed", new_val)
         self.left_status_icon.setPixmap(self._no_pix)
         #self.pipeline.left_index_changed(new_val)
         self._refresh_left_pressures(new_val)
@@ -203,6 +261,7 @@ class FrameTab(QWidget):
         #print(new_val)
 
     def _on_right_index_changed(self, new_val: int):
+        print("FRAME TAB: right_index changed", new_val)
         self.right_status_icon.setPixmap(self._no_pix)
         #self.pipeline.left_index_changed(new_val)
         self._refresh_right_pressures(new_val)
@@ -221,6 +280,7 @@ class FrameTab(QWidget):
         self.pipeline.load_right_frame(self._right_pending)
 
     def _update_frame_count(self, frame_count):
+        print("FRAME TAB: Updating frame count", frame_count)
         frame_index = frame_count - 1
         if self.pipeline.trim_stop != 42:
             frame_index = self.pipeline.trim_stop
@@ -237,6 +297,7 @@ class FrameTab(QWidget):
         self._refresh_right_pressures(self.right_slider.value())
 
     def _update_trim_range(self, vals):
+        print("FRAME TAB: Updating trim range", vals)
         start, stop = vals
         if stop > self.pipeline.frame_count - 1:
             stop = max(1, self.pipeline.frame_count - 1)
@@ -261,6 +322,7 @@ class FrameTab(QWidget):
         """
         Slot that receives the NumPy array from the pipeline and updates the UI.
         """
+        print("FRAME TAB: Updating left frame")
         pixmap = numpy_to_qpixmap(frame)
         self.frame_label1.setPixmap(pixmap)
 
@@ -268,5 +330,6 @@ class FrameTab(QWidget):
         """
         Slot that receives the NumPy array from the pipeline and updates the UI.
         """
+        print("FRAME TAB: Updating right frame")
         pixmap = numpy_to_qpixmap(frame)
         self.frame_label2.setPixmap(pixmap)

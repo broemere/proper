@@ -1,6 +1,6 @@
 import numpy as np
 from data_pipeline import DataPipeline
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent, Slot
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QSizePolicy, QSlider, \
     QFrame
 from processing.data_transform import numpy_to_qpixmap
@@ -16,7 +16,9 @@ class LevelTab(QWidget):
         # Store references to the canvas windows to prevent them from being garbage collected
         self.canvas_window1 = None
         self.canvas_window2 = None
+        self._is_state_synced = False
         self.init_ui()
+        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
         self.pipeline.register_observer("leveled", self._update_frames)
 
     def init_ui(self):
@@ -70,6 +72,37 @@ class LevelTab(QWidget):
 
         self.b_slider.valueChanged.connect(lambda v: self._on_level_change(self.b_value, "brightness", v))
         self.c_slider.valueChanged.connect(lambda v: self._on_level_change(self.c_value, "contrast", v))
+
+    def showEvent(self, event: QEvent):
+        """This Qt event fires every time the widget is shown."""
+        super().showEvent(event)
+        # If the widget is being shown and its UI is out of sync, update it now.
+        if self.isVisible() and not self._is_state_synced:
+            self._sync_ui_to_pipeline()
+
+    @Slot()
+    def _on_state_loaded(self, _):
+        """Slot for the 'state_loaded' signal. Marks the UI as dirty."""
+        print("LEVEL TAB: Received 'state_loaded' notification.")
+        self._is_state_synced = False
+        # Sync immediately if visible, otherwise, showEvent will handle it when the user clicks the tab.
+        if self.isVisible():
+            self._sync_ui_to_pipeline()
+
+    def _sync_ui_to_pipeline(self):
+        """Pulls the current state from the pipeline and updates all UI controls."""
+        print("LEVEL TAB: Synchronizing entire UI to pipeline state.")
+        for widget in (self.b_slider, self.c_slider):
+            widget.blockSignals(True)
+        try:
+            self.b_value.setText(str(getattr(self.pipeline, 'brightness', 50)))
+            self.c_value.setText(str(getattr(self.pipeline, 'contrast', 50)))
+            self.b_slider.setValue(getattr(self.pipeline, 'brightness', 50))
+            self.c_slider.setValue(getattr(self.pipeline, 'contrast', 50))
+            self._is_state_synced = True
+        finally:
+            for widget in (self.b_slider, self.c_slider):
+                widget.blockSignals(False)
 
     def _on_frame1_action(self):
         """Launches the drawing window for the first frame."""
@@ -136,3 +169,4 @@ class LevelTab(QWidget):
         self.c_slider.setValue(50)
         self.pipeline.left_level_blobs = None
         self.pipeline.right_level_blobs = None
+        self.pipeline.level_update()

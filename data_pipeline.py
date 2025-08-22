@@ -2,6 +2,7 @@ from difflib import restore
 
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy
 from processing.data_loader import load_csv, frame_loader
+from collections import OrderedDict
 import numpy as np
 import logging
 import json
@@ -47,6 +48,10 @@ class DataPipeline:
         self.right_level_blobs: np.ndarray = None
         self.left_thresh_blobs: np.ndarray = None
         self.right_thresh_blobs: np.ndarray = None
+
+        self.MAX_MARKERS = 5
+        self.area_data_left = OrderedDict()  # {blob_id: [area, cx, cy, 'Label']}
+        self.area_data_right = OrderedDict()
 
 
     def register_observer(self, key: str, callback):
@@ -423,16 +428,86 @@ class DataPipeline:
         print("Plot data restored")
         self.notify_observers('conversion_factor', self.conversion_factor)
         self.notify_observers('author', self.author)
-        self.notify_observers('left_image', self.left_image)
-        self.notify_observers('right_image', self.right_image)
-        self.notify_observers('frame_count', self.frame_count)
+        self.notify_observers('left_image', self.left_image) # Scale, frame
+        self.notify_observers('right_image', self.right_image) # Frame, Thickness
         self.level_update()
         self.segment_image(self.left_threshed, "left")
         self.segment_image(self.right_threshed, "right")
         self.left_threshed_old = self.left_threshed.copy()
         self.right_threshed_old = self.right_threshed.copy()
+        self.notify_observers('state_loaded', "") # Final notification that the pipeline has had its state reloaded
 
     def on_author_changed(self, new_author):
         self.author = new_author
         print(self.author)
 
+    def add_area_data(self, left_right: str, blob_props: list):
+        """
+        Adds blob data using an OrderedDict to enforce a FIFO size limit.
+        """
+        blob_id, area, cx, cy = blob_props
+        data_store = self.area_data_left if left_right == 'left' else self.area_data_right
+
+        # If the user re-clicks an existing blob, move it to the end (making it the newest)
+        if blob_id in data_store:
+            data_store.move_to_end(blob_id)
+
+        # Add or update the blob data
+        data_store[blob_id] = [area, cx, cy, ""]
+
+        # 3. Enforce the size limit with FIFO
+        # If the dictionary is now over the max size, pop the oldest item.
+        if len(data_store) > self.MAX_MARKERS:
+            # .popitem(last=False) removes the first item inserted (FIFO)
+            data_store.popitem(last=False)
+
+        # Recalculate labels if we have a full set of 5
+        if len(data_store) == self.MAX_MARKERS:
+            self._calculate_and_assign_labels(data_store)
+
+        self.notify_observers('area_data_updated', left_right)
+
+    def _calculate_and_assign_labels(self, data_store: dict):
+        """
+        Calculates and assigns positional labels sequentially to prevent overwrites
+        and handle "corner cases" correctly.
+        """
+        if len(data_store) != self.MAX_MARKERS:
+            return
+
+        # First, clear all previous labels to ensure a clean slate
+        for blob_id in data_store:
+            data_store[blob_id][3] = ""
+
+        # Create a mutable list of unlabeled blobs with their properties
+        # Format: [(blob_id, cx, cy), ...]
+        unlabeled_blobs = [
+            (blob_id, props[1], props[2]) for blob_id, props in data_store.items()
+        ]
+
+        # --- Find, label, and remove blobs one by one ---
+
+        # Find Left-most blob from all candidates
+        left_blob = min(unlabeled_blobs, key=lambda b: b[1])
+        data_store[left_blob[0]][3] = "Left"
+        unlabeled_blobs.remove(left_blob)
+
+        # Find Right-most blob from the *remaining* candidates
+        right_blob = max(unlabeled_blobs, key=lambda b: b[1])
+        data_store[right_blob[0]][3] = "Right"
+        unlabeled_blobs.remove(right_blob)
+
+        # Find Top-most blob from the *remaining* candidates
+        top_blob = min(unlabeled_blobs, key=lambda b: b[2])
+        data_store[top_blob[0]][3] = "Top"
+        unlabeled_blobs.remove(top_blob)
+
+        # Find Bottom-most blob from the *remaining* candidates
+        bottom_blob = max(unlabeled_blobs, key=lambda b: b[2])
+        data_store[bottom_blob[0]][3] = "Bottom"
+        unlabeled_blobs.remove(bottom_blob)
+
+        # The last remaining blob must be the Middle one
+        if unlabeled_blobs:
+            middle_blob_id = unlabeled_blobs[0][0]
+            data_store[middle_blob_id][3] = "Middle"
