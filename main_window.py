@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def add_new_super_tab(self, unfocus=False):
         """Creates a new AnalysisSessionWidget and adds it as a new 'supertab'."""
-        session_widget = AnalysisSessionWidget(self.task_manager)
+        session_widget = AnalysisSessionWidget(self.task_manager, self.settings)
         session_widget.tab_name_requested.connect(self.on_tab_name_change_requested)
 
         tab_name = f"Analysis {self.super_tabs.count() + 1}"

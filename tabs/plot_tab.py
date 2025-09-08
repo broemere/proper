@@ -16,6 +16,7 @@ class PlotTab(QWidget):
         self.pipeline.register_observer("raw", self._new_data_loaded)
         self.pipeline.register_observer("transformed", self._data_transformed)
         self.pipeline.register_observer("state_loaded", self._on_state_loaded)
+        self.pipeline.register_observer("trimming", self._sync_ui_to_pipeline)
 
     def init_ui(self):
         # --- AESTHETIC TWEAK: Enable antialiasing for smoother lines ---
@@ -67,8 +68,8 @@ class PlotTab(QWidget):
         trim_layout = QHBoxLayout()
         trim_layout.setAlignment(Qt.AlignCenter)
         trim_layout.addWidget(QLabel('Trim Data:'))
-        self.spin_start = QSpinBox(minimum=0)
-        self.spin_stop = QSpinBox(minimum=0)
+        self.spin_start = QSpinBox(minimum=1)
+        self.spin_stop = QSpinBox(minimum=1)
         # Initialize limits after loading data
         self.spin_start.valueChanged.connect(self._apply_trim)
         self.spin_stop.valueChanged.connect(self._apply_trim)
@@ -141,7 +142,7 @@ class PlotTab(QWidget):
         if self.isVisible():
             self._sync_ui_to_pipeline()
 
-    def _sync_ui_to_pipeline(self):
+    def _sync_ui_to_pipeline(self, *args):
         """Pulls the current state from the pipeline and updates all UI controls."""
         log.info("PlotTab: Synchronizing UI controls to pipeline state.")
 
@@ -155,8 +156,8 @@ class PlotTab(QWidget):
 
         try:
             # Update trim controls
-            self.spin_start.setMaximum(self.pipeline.length - 1)
-            self.spin_stop.setMaximum(self.pipeline.length - 1)
+            self.spin_start.setMaximum(max(0, self.pipeline.working_length-1))
+            self.spin_stop.setMaximum(max(0, self.pipeline.working_length-1))
             self.spin_start.setValue(self.pipeline.trim_start)
             self.spin_stop.setValue(self.pipeline.trim_stop)
 
@@ -208,6 +209,7 @@ class PlotTab(QWidget):
     def _apply_trim(self):
         start = self.spin_start.value()
         stop = self.spin_stop.value()
+        print("Setting trim", start, stop)
         self.pipeline.set_trimming(start, stop)
 
     def _apply_zeroing(self):
@@ -231,10 +233,12 @@ class PlotTab(QWidget):
         self.smooth_curve.setData(t, p)
 
     def _new_data_loaded(self, data):
-        self.spin_start.setMaximum(self.pipeline.length-1)
-        self.spin_stop.setMaximum(self.pipeline.length-1)
-        self.spin_stop.setValue(self.pipeline.length-1)
-        self._apply_trim()
+        self.spin_start.setMaximum(self.pipeline.working_length-1)
+        self.spin_start.setValue(0)
+        self.spin_stop.setMaximum(self.pipeline.working_length-1)
+        self.spin_stop.setValue(self.pipeline.working_length-1)
+        log.info("new data")
+        #self._apply_trim()
         # self._apply_zeroing()
         # zeroed_data = self.pipeline.get_data("zeroed")
         # self._update_zero_plot(zeroed_data)

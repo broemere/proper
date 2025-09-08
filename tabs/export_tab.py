@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QSettings
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QComboBox, QFormLayout
 from data_pipeline import DataPipeline
 import json
@@ -12,6 +12,7 @@ class ExportTab(QWidget):
 
     FIELD_DEFINITIONS = {
         "Pressure": "mmHg",
+        "Frame/Row": "",
         "Radius a": "mm",
         "Radius b": "mm",
         "Wall Thickness": "mm",
@@ -20,9 +21,10 @@ class ExportTab(QWidget):
         "V_lumen": "mm³",
     }
 
-    def __init__(self, pipeline: DataPipeline, parent=None):
+    def __init__(self, pipeline: DataPipeline, settings: QSettings, parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
+        self.settings = settings  # Store the settings object
         self.first_labels = {}
         self.last_labels = {}
         self.first_selector_combo = None
@@ -30,7 +32,7 @@ class ExportTab(QWidget):
         self.init_ui()
         #self.pipeline.register_observer("state_dict", self.save_state)
         #self.export_btn.clicked.connect(self.pipeline.get_state)
-        self.selector_combo.currentIndexChanged.connect(lambda index: self._selection_changed(index))
+        #self.selector_combo.currentIndexChanged.connect(lambda index: self._selection_changed(index))
         self.pipeline.register_observer("results_updated", self._update_all_fields)
 
     def init_ui(self):
@@ -46,7 +48,8 @@ class ExportTab(QWidget):
         ellipse_label = QLabel("Ellipses to use:")
         self.selector_combo = QComboBox()
         self.selector_combo.addItems([str(i) for i in range(1, 5)])
-        self.selector_combo.setCurrentIndex(4)
+        self.selector_combo.currentIndexChanged.connect(self._selection_changed)
+        #self.selector_combo.setCurrentIndex(3)
         self.pipeline.n_ellipses = self.selector_combo.currentIndex()
         ellipses_layout.addWidget(ellipse_label)
         ellipses_layout.addWidget(self.selector_combo)
@@ -74,9 +77,16 @@ class ExportTab(QWidget):
         export_layout.addStretch()
         self.export_btn = QPushButton("Export Results")
         export_layout.addWidget(self.export_btn)
+        self.export_btn.clicked.connect(self.pipeline.generate_report)
         export_layout.addStretch()
 
         main_layout.addLayout(export_layout)
+
+        saved_index = self.settings.value("export/n_ellipses", defaultValue=3, type=int)
+        self.selector_combo.setCurrentIndex(saved_index)
+
+        # Manually call this once to ensure the pipeline has the correct initial value
+        #self._selection_changed(self.selector_combo.currentIndex())
 
     def _create_data_section(self, title: str) -> tuple[QWidget, dict[str, QLabel], QComboBox]:
         """
@@ -111,14 +121,38 @@ class ExportTab(QWidget):
 
         return container, value_labels
 
+    def _format_value(self, value: float) -> str:
+        """
+        Formats a number with a variable number of decimal places based on its magnitude.
+        - 3 decimal places for numbers < 1
+        - 2 decimal places for numbers < 10
+        - 1 decimal place for numbers >= 10
+        """
+        # Gracefully handle cases where the value might not be a number
+        if not isinstance(value, (int, float)):
+            return str(value)
+
+        # NEW: Check if the number is effectively an integer (e.g., 12 or 12.0)
+        if value == int(value):
+            return f"{int(value)}" # Format as a simple integer
+
+        num_abs = abs(value)
+
+        if num_abs < 1:
+            precision = 3
+        elif num_abs < 10:
+            precision = 2
+        else:  # For numbers 10 and greater
+            precision = 1
+
+        # Use an f-string with a dynamic precision
+        return f"{value:.{precision}f}"
+
     @Slot(dict)
     def _update_all_fields(self, data: dict):
         """
-        Updates all data fields in the UI from a single data dictionary.
-
-        Args:
-            data (dict): A dictionary containing 'first' and 'last' keys,
-                         with sub-dictionaries for the data fields.
+        Updates all data fields in the UI from a single data dictionary,
+        using custom formatting for the values.
         """
         log.info("Updating all fields with new data.")
 
@@ -127,28 +161,28 @@ class ExportTab(QWidget):
         for key, value in first_data.items():
             if key in self.first_labels:
                 unit = self.FIELD_DEFINITIONS.get(key, "")
-                self.first_labels[key].setText(f"{value:.2f} {unit}")
+                formatted_value = self._format_value(value)  # Use the helper
+                self.first_labels[key].setText(f"{formatted_value} {unit}")
 
         # Update "Last" section labels
         last_data = data.get("last", {})
         for key, value in last_data.items():
             if key in self.last_labels:
                 unit = self.FIELD_DEFINITIONS.get(key, "")
-                self.last_labels[key].setText(f"{value:.2f} {unit}")
+                formatted_value = self._format_value(value)  # Use the helper
+                self.last_labels[key].setText(f"{formatted_value} {unit}")
 
-    @Slot(str, int)
+    @Slot(int)
     def _selection_changed(self, index: int):
         """
-        Handles changes in the dropdown selectors.
-
-        Args:
-            section (str): Identifier for the section ('first' or 'last').
-            index (int): The new zero-based index of the combo box.
+        Handles changes in the number of ellipses selector, updates the pipeline,
+        and saves the selection for the next session.
         """
-        selected_option = index + 1
-        log.info(f"Dropdown changed to: {selected_option}")
-        # Example of how you might call your pipeline
-        # if section == 'first':
-        #     self.pipeline.set_first_ellipse(selected_option)
-        # elif section == 'last':
-        #     self.pipeline.set_last_ellipse(selected_option)
+        n_ellipses = index + 1
+        log.info(f"Number of ellipses changed to: {n_ellipses}")
+
+        # 1. Update the data pipeline with the new value
+        self.pipeline.n_ellipses = n_ellipses
+
+        # 2. Save the selected index to QSettings for persistence
+        self.settings.setValue("export/n_ellipses", index)

@@ -8,6 +8,8 @@ from PySide6.QtGui import QPalette, QPixmap
 import numpy as np
 from processing.data_transform import numpy_to_qpixmap
 from widgets.adaptive_image import AutoResizeImage
+import logging
+log = logging.getLogger(__name__)
 
 
 
@@ -22,11 +24,17 @@ class FrameTab(QWidget):
         self._is_state_synced = False
         self.init_ui()
 
+        self._currently_displayed_left_frame_idx = -1
+        self._currently_displayed_right_frame_idx = -1
+
         self.pipeline.register_observer("state_loaded", self._on_state_loaded)
-        self.pipeline.register_observer("frame_count", self._update_frame_count)
+        #self.pipeline.register_observer("frame_count", self._update_frame_count)
+
         self.pipeline.register_observer("left_image", self._update_left_frame)
         self.pipeline.register_observer("right_image", self._update_right_frame)
-        self.pipeline.register_observer("trimming", self._update_trim_range)
+
+        self.pipeline.register_observer("left_keypoint_changed", self.on_left_keypoint_updated)
+        self.pipeline.register_observer("right_keypoint_changed", self.on_right_keypoint_updated)
 
         self._left_debounce = QTimer(self, singleShot=True)
         self._left_debounce.setInterval(2000)
@@ -179,55 +187,75 @@ class FrameTab(QWidget):
         if self.isVisible():
             self._sync_ui_to_pipeline()
 
-    def _sync_ui_to_pipeline(self):
-        """Pulls the current state from the pipeline and updates all UI controls."""
-        print("FRAME TAB: Synchronizing entire UI to pipeline state.")
+        # perform the "lazy load" check.
+        # If the frame we are showing is out of sync with the pipeline's state,
+        # command the pipeline to load the correct one.
+        if self._currently_displayed_left_frame_idx != self.pipeline.left_index:
+            log.info("Left frame is stale. Requesting updated frame from pipeline.")
+            self.pipeline.set_left_keypoint(self.pipeline.left_index, load_frame=True)
 
-        # Block signals on all controls to prevent them from firing while we set values
-        for widget in (self.left_slider, self.left_spin, self.right_slider, self.right_spin):
+        if self._currently_displayed_right_frame_idx != self.pipeline.right_index:
+            log.info("Right frame is stale. Requesting updated frame from pipeline.")
+            self.pipeline.set_right_keypoint(self.pipeline.right_index, load_frame=True)
+
+    def _sync_ui_to_pipeline(self):
+        """
+        Pulls the complete state from the pipeline and updates all UI controls at once.
+        This is the single source of truth for synchronizing the FrameTab UI.
+        """
+        log.info("FRAME TAB: Synchronizing entire UI to pipeline state.")
+
+        widgets_to_block = [
+            self.left_slider, self.left_spin,
+            self.right_slider, self.right_spin,
+            self.left_goto, self.right_goto
+        ]
+        for widget in widgets_to_block:
             widget.blockSignals(True)
 
         try:
-            # 1. Set the RANGE of sliders first, based on trim settings
+            # 1. Get the latest trim and keypoint values from the pipeline
             start, stop = self.pipeline.trim_start, self.pipeline.trim_stop
+            left_idx, right_idx = self.pipeline.left_index, self.pipeline.right_index
+
+            # 2. Update slider/spinbox RANGES
             for slider, spin in ((self.left_slider, self.left_spin), (self.right_slider, self.right_spin)):
                 slider.setRange(start, stop)
                 spin.setRange(start, stop)
 
-            # 2. Set the VALUE of the sliders second, using the loaded indices
-            # Use getattr to safely get the value, providing a default if it's not there
-            self.left_spin.setValue(getattr(self.pipeline, 'left_index', start))
-            self.right_spin.setValue(getattr(self.pipeline, 'right_index', stop))
-            self.left_slider.setValue(getattr(self.pipeline, 'left_index', start))
-            self.right_slider.setValue(getattr(self.pipeline, 'right_index', stop))
+            # 3. Update slider/spinbox VALUES
+            self.left_spin.setValue(left_idx)
+            self.right_spin.setValue(right_idx)
+            self.left_slider.setValue(left_idx)
+            self.right_slider.setValue(right_idx)
 
-            # 3. Update the pressure readouts for the new slider values
-            self._refresh_left_pressures(self.left_spin.value())
-            self._refresh_right_pressures(self.right_spin.value())
+            # 4. Update "Go To" pressure boxes
+            self.left_goto.setValue(self.pipeline.initial_pressure)
+            self.right_goto.setValue(self.pipeline.final_pressure)
 
-            # 4. Update the image displays with the frames already loaded in the pipeline
-            self._update_left_frame(self.pipeline.left_image)
-            self._update_right_frame(self.pipeline.right_image)
+            # 5. Refresh pressure labels with the correct indices
+            self._refresh_left_pressures(left_idx)
+            self._refresh_right_pressures(right_idx)
 
-            # 5. Mark the UI as being in sync
             self._is_state_synced = True
 
         finally:
-            # Always unblock signals
-            for widget in (self.left_slider, self.left_spin, self.right_slider, self.right_spin):
+            # ALWAYS unblock signals
+            for widget in widgets_to_block:
                 widget.blockSignals(False)
 
     def _goto_left(self):
-        p = self.left_goto.value()
-        if self.pipeline.csv_path:
-            idx = np.argmin(np.abs(np.subtract(self.pipeline.smoothed_data["p"], p)))
-            self.left_spin.setValue(idx+self.pipeline.trim_start)
+        """Handles the 'Go to' button click for the left panel."""
+        target_pressure = self.left_goto.value()
+        # Tell the pipeline to find the frame for this pressure. The pipeline does all the work.
+        self.pipeline.find_and_set_keypoint_by_pressure('left', target_pressure)
+        self._refresh_left_pressures(self.pipeline.left_index)
 
     def _goto_right(self):
-        p = self.right_goto.value()
-        if self.pipeline.csv_path:
-            idx = np.argmin(np.abs(np.subtract(self.pipeline.smoothed_data["p"], p)))
-            self.right_spin.setValue(idx+self.pipeline.trim_start)
+        """Handles the 'Go to' button click for the right panel."""
+        target_pressure = self.right_goto.value()
+        self.pipeline.find_and_set_keypoint_by_pressure('right', target_pressure)
+        self._refresh_right_pressures(self.pipeline.right_index)
 
     def _refresh_left_pressures(self, index: int):
         print("FRAME TAB: refreshing left pressures", index)
@@ -272,51 +300,12 @@ class FrameTab(QWidget):
     def _fire_left_index(self):
         # now that 2 s passed with no new moves:
         self.left_status_icon.setPixmap(self._yes_pix)
-        self.pipeline.load_left_frame(self._left_pending)
+        self.pipeline.set_left_keypoint(self._left_pending, load_frame=True)
 
     def _fire_right_index(self):
         # now that 2 s passed with no new moves:
         self.right_status_icon.setPixmap(self._yes_pix)
-        self.pipeline.load_right_frame(self._right_pending)
-
-    def _update_frame_count(self, frame_count):
-        print("FRAME TAB: Updating frame count", frame_count)
-        frame_index = frame_count - 1
-        if self.pipeline.trim_stop != 42:
-            frame_index = self.pipeline.trim_stop
-        for slider, spin in (
-            (self.left_slider,  self.left_spin),
-            (self.right_slider, self.right_spin)
-        ):
-            slider.setMaximum(frame_index)
-            spin.setMaximum(frame_index)
-            # clamp the current value if needed:
-            if spin.value() > frame_index:
-                spin.setValue(frame_index)
-        self._refresh_left_pressures(self.left_slider.value())
-        self._refresh_right_pressures(self.right_slider.value())
-
-    def _update_trim_range(self, vals):
-        print("FRAME TAB: Updating trim range", vals)
-        start, stop = vals
-        if stop > self.pipeline.frame_count - 1:
-            stop = max(1, self.pipeline.frame_count - 1)
-        for slider, spin in (
-            (self.left_slider,  self.left_spin),
-            (self.right_slider, self.right_spin)
-        ):
-            slider.setMinimum(start)
-            spin.setMinimum(start)
-            slider.setMaximum(stop)
-            spin.setMaximum(stop)
-            # clamp the current value if needed:
-            if spin.value() < start:
-                spin.setValue(start)
-            if spin.value() > stop:
-                spin.setValue(stop)
-
-        self._refresh_left_pressures(self.left_slider.value())
-        self._refresh_right_pressures(self.right_slider.value())
+        self.pipeline.set_right_keypoint(self._right_pending, load_frame=True)
 
     def _update_left_frame(self, frame: np.ndarray):
         """
@@ -333,3 +322,25 @@ class FrameTab(QWidget):
         print("FRAME TAB: Updating right frame")
         pixmap = numpy_to_qpixmap(frame)
         self.frame_label2.setPixmap(pixmap)
+
+    @Slot(int)
+    def on_left_keypoint_updated(self, new_index):
+        # This slot updates the UI (e.g., a spinbox) to reflect the new index
+        # but does NOT trigger a frame load.
+        self.left_spin.blockSignals(True)
+        self.left_slider.blockSignals(True)
+        self.left_spin.setValue(new_index)
+        self.left_slider.setValue(new_index)
+        self.left_spin.blockSignals(False)
+        self.left_slider.blockSignals(False)
+
+    @Slot(int)
+    def on_right_keypoint_updated(self, new_index):
+        # This slot updates the UI (e.g., a spinbox) to reflect the new index
+        # but does NOT trigger a frame load.
+        self.right_spin.blockSignals(True)
+        self.right_slider.blockSignals(True)
+        self.right_spin.setValue(new_index)
+        self.right_slider.setValue(new_index)
+        self.right_spin.blockSignals(False)
+        self.right_slider.blockSignals(False)

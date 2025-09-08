@@ -8,6 +8,7 @@ import logging
 import json
 import os
 from config import APP_VERSION
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -18,13 +19,12 @@ class DataPipeline:
         self.zeroed_data = {"t": [], "p": []}
         self.smoothed_data = {"t": [], "p": []}
         self.csv_path = None
-        self.length = 42
         self.video = None
         self.frame_count = 0
         self.initial_pressure = 0
-        self.initial_index = 0
         self.final_pressure = 25
-        self.final_index = -1
+        self.left_index = 0
+        self.right_index = 0
         self.brightness = 50
         self.contrast = 50
         self.threshold = 127
@@ -53,6 +53,11 @@ class DataPipeline:
         self.area_data_left = OrderedDict()  # {blob_id: [area, cx, cy, 'Label']}
         self.area_data_right = OrderedDict()
 
+        self.thickness_data = []
+
+        self.infusion_rate = 0.5  # uL/sec
+        self.MMHG2KPA = 1/7.501
+
 
     def register_observer(self, key: str, callback):
         """Register a callback to be invoked when the given key changes."""
@@ -70,34 +75,51 @@ class DataPipeline:
         Run the entire pipeline: apply trimming, then smoothing, then zeroing.
         This ensures that any change in a parameter cascades through the pipeline.
         """
-        # 1. Apply trimming.
-        self.trimmed_data = {key: self.raw_data[key][max(0, int(self.trim_start)):min(int(self.trim_stop+1), self.length)] for key in self.raw_data}
-        # 2. Apply zeroing on the trimmed data (using the current smoothing parameters too).
-        self.zeroed_data = zero_data(self.trimmed_data, self.zeroing_method, self.zeroing_window + 1)
-        # 3. Apply smoothing on the trimmed data.
-        self.smoothed_data = smooth_data(self.zeroed_data, self.smoothing_method, self.smoothing_window + 1)
-        self.notify_observers('transformed', [self.zeroed_data, self.smoothed_data])
-        print("Points plotted:", len(self.smoothed_data["p"]))
+        # The +1 is necessary because Python slicing is exclusive of the stop index.
+        if len(self.raw_data["t"]) > 0:
+            start_idx = int(self.trim_start)
+            stop_idx = int(self.trim_stop) + 1
+            # 1. Apply trimming.
+            self.trimmed_data = {
+                key: self.raw_data[key][start_idx:stop_idx]
+                for key in self.raw_data
+            }
+            # 2. Apply zeroing on the trimmed data (using the current smoothing parameters too).
+            self.zeroed_data = zero_data(self.trimmed_data, self.zeroing_method, self.zeroing_window + 1)
+            # 3. Apply smoothing on the trimmed data.
+            self.smoothed_data = smooth_data(self.zeroed_data, self.smoothing_method, self.smoothing_window + 1)
+            self.notify_observers('transformed', [self.zeroed_data, self.smoothed_data])
+            print("Points plotted:", len(self.smoothed_data["p"]))
 
     def load_csv_file(self, file_path: str):
         """
         Load a CSV file, initialize the data stages, and compute a hash for the file.
         """
         self.csv_path = file_path
+        print(self.csv_path)
+        print(os.path.splitext(os.path.basename(self.csv_path))[0])
         self.raw_data = load_csv(file_path)
-        self.length = int(len(self.raw_data["t"]))
-        self.trim_stop = self.length
+        #self.set_trimming(0, self.working_length-1)
         self.notify_observers('raw', None)
+        log.info("Finding initial keypoints based on default pressures.")
         self.update_pipeline()
+        self.find_and_set_keypoint_by_pressure('left', self.initial_pressure)
+        self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
+        #
 
     def set_trimming(self, start: int, stop: int):
         """
         Set the trimming parameters and schedule an update.
         """
-        self.trim_start = start
-        self.trim_stop = stop
+        # Clamp values to be within the valid range of the working data length
+        log.info(("Setting trim:", start, stop))
+        valid_max = self.working_length - 1
+        self.trim_start = max(0, min(start, valid_max))
+        # Ensure stop is never less than start
+        self.trim_stop = max(self.trim_start, min(stop, valid_max))
         self.update_pipeline()
-        self.notify_observers('trimming', (start, stop))
+        log.info(("TRIM VALUES", self.trim_start, self.trim_stop))
+        self.notify_observers('trimming', (self.trim_start, self.trim_stop))
 
     def set_zeroing(self, method: str, window: int):
         self.zeroing_method = method
@@ -136,13 +158,10 @@ class DataPipeline:
         """
         log.info(f"Received {len(result)-1} loaded frames from worker.")
 
-        # Let's say we requested one frame for the scaling tab.
         # We need to know which frame we got. The dictionary keys help here.
         if not result:
             log.warning("Frame loader returned no frames.")
             return
-
-        # Example: Get the first (and likely only) frame from the result.
         it = iter(result)
         first_frame_index = next(it)
         self.left_image = result[first_frame_index]
@@ -152,21 +171,37 @@ class DataPipeline:
         self.notify_observers('left_image', self.left_image)
         self.frame_count = next(it)
         log.info(f"Frame count found: {self.frame_count}")
-        self.notify_observers('frame_count', self.frame_count)
+        self.set_trimming(0, self.working_length -1)
+        #self.notify_observers('frame_count', self.frame_count)
         self.level_update()
 
-    def load_left_frame(self, index=None):
-        if index is None:
-            index = self.trim_start
-        if self.video:
-            log.info(f"Loading {index} frame.")
-            self.left_index = index
+    def set_left_keypoint(self, index: int, load_frame: bool = True):
+        """
+        Sets the left keypoint index, validates it, and optionally loads the frame.
+        """
+        # Validate and clamp the index to be within the current trim range
+        self.left_index = max(self.trim_start, min(index, self.trim_stop))
+        log.info(f"Setting left keypoint index to: {self.left_index}")
+        if load_frame and self.video:
+            log.info(f"Dispatching frame loader for left_index: {self.left_index}")
             self.task_manager.queue_task(
-                frame_loader,  # The function to run
-                self.video,  # This will be the 'vid_file' argument
-                [self.left_index],  # This will be the 'frame_indices' argument
-                on_result=self.left_frame_loaded # Optional: a method in DataPipeline to handle the result
+                frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
             )
+        # Notify UI elements that the index has changed
+        self.notify_observers('left_keypoint_changed', self.left_index)
+
+    def set_right_keypoint(self, index: int, load_frame: bool = True):
+        """
+        Sets the right keypoint index, validates it, and optionally loads the frame.
+        """
+        self.right_index = max(self.trim_start, min(index, self.trim_stop))
+        log.info(f"Setting right keypoint index to: {self.right_index}")
+        if load_frame and self.video:
+            log.info(f"Dispatching frame loader for right_index: {self.right_index}")
+            self.task_manager.queue_task(
+                frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
+            )
+        self.notify_observers('right_keypoint_changed', self.right_index)
 
     def left_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))
@@ -174,19 +209,6 @@ class DataPipeline:
         self.left_image_user = None
         self.notify_observers('left_image', self.left_image)
         self.level_update()
-
-    def load_right_frame(self, index=None):
-        if index is None:
-            index = self.trim_start
-        if self.video:
-            log.info(f"Loading {index} frame.")
-            self.right_index = index
-            self.task_manager.queue_task(
-                frame_loader,  # The function to run
-                self.video,  # This will be the 'vid_file' argument
-                [self.right_index],  # This will be the 'frame_indices' argument
-                on_result=self.right_frame_loaded # Optional: a method in DataPipeline to handle the result
-            )
 
     def right_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))
@@ -511,3 +533,257 @@ class DataPipeline:
         if unlabeled_blobs:
             middle_blob_id = unlabeled_blobs[0][0]
             data_store[middle_blob_id][3] = "Middle"
+
+    def set_thickness_data(self, lengths: list[float]):
+        """
+        Replaces the current thickness data with a new, complete list of line lengths.
+        This single method handles adding, undoing, and clearing lines.
+        """
+        self.thickness_data = lengths
+        log.info(f"Pipeline thickness data updated. {len(lengths)} lines.")
+        # Notify any observers (like ThicknessTab) that the state has changed.
+        self.notify_observers('thickness_data_updated', lengths)
+
+    def n_closest_numbers(self, nums, n):
+        if n > len(nums):
+            raise ValueError("n cannot be larger than the list length")
+
+        # Step 1: sort the list
+        nums = sorted(nums)
+
+        min_range = float('inf')
+        best_group = []
+
+        # Step 2: slide a window of size n
+        for i in range(len(nums) - n + 1):
+            window = nums[i:i + n]
+            spread = window[-1] - window[0]  # max - min in the window
+            if spread < min_range:
+                min_range = spread
+                best_group = window
+
+        return best_group
+
+    @property
+    def working_length(self) -> int:
+        """
+        Returns the effective number of samples for analysis, which is the
+        minimum of the CSV data length and the video frame count.
+        Returns 0 if either data source is not loaded.
+        """
+        if not self.raw_data["t"] and self.frame_count == 0:
+            return 0
+
+        if self.frame_count == 0:
+            return len(self.raw_data["t"])
+        elif not self.raw_data["t"]:
+            return self.frame_count
+        else:
+            return min(len(self.raw_data["t"]), self.frame_count)
+
+    def _find_closest_index_by_pressure(self, target_pressure: float) -> int:
+        """
+        Finds the index in the smoothed data closest to a target pressure.
+
+        Returns:
+            int: The absolute index (relative to raw_data) of the closest point.
+        """
+        if self.smoothed_data['p'].size == 0:
+            log.warning("Cannot find pressure; smoothed data is empty.")
+            return self.trim_start  # Return a safe default
+
+        # Use numpy for efficient searching
+        pressure_array = np.asarray(self.smoothed_data['p'])
+
+        # Find the index in the *trimmed* data array that has the minimum difference
+        relative_index = np.argmin(np.abs(pressure_array - target_pressure))
+
+        # --- CRITICAL STEP ---
+        # Convert the relative index back to an absolute index by adding the trim_start offset
+        absolute_index = self.trim_start + relative_index
+
+        return int(absolute_index)
+
+    def find_and_set_keypoint_by_pressure(self, side: str, pressure: float):
+        """
+        Public method for the UI to find a keypoint by its pressure value.
+
+        Args:
+            side (str): Either 'left' or 'right'.
+            pressure (float): The target pressure to find.
+        """
+        log.info(f"UI requested to find keypoint for '{side}' side at {pressure} mmHg.")
+
+        # First, store the user's requested pressure so it's saved in the state
+        if side == 'left':
+            self.initial_pressure = pressure
+        elif side == 'right':
+            self.final_pressure = pressure
+
+        # Find the absolute index corresponding to that pressure
+        found_index = self._find_closest_index_by_pressure(pressure)
+
+        # Use our existing, validated setters to update the state and load the frame
+        if side == 'left':
+            self.set_left_keypoint(found_index)
+        elif side == 'right':
+            self.set_right_keypoint(found_index)
+
+    def generate_report(self):
+        print("Indices:", self.left_index, self.right_index)
+
+        data = self.smoothed_data
+        t_final = np.mean(self.n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
+        blobs_left = self.area_data_left
+        blobs_right = self.area_data_right
+        #print(t_final)
+        print(blobs_left)
+        print(blobs_right)
+
+        areas_left = []
+        areas_right = []
+
+        for props in blobs_left.values():
+            area, cx, cy, label = props
+            if label == "Middle":
+                area_mid_left = area / (self.conversion_factor ** 2)
+                ra_left = np.sqrt(area_mid_left/np.pi)
+            else:
+                areas_left.append(area / (self.conversion_factor ** 2))
+
+        area_left = np.mean(self.n_closest_numbers(areas_left, self.n_ellipses))
+        rb_left = (area_left/(np.pi*ra_left))
+
+        for props in blobs_right.values():
+            area, cx, cy, label = props
+            if label == "Middle":
+                area_mid_right = area / (self.conversion_factor ** 2)
+                ra_right = np.sqrt(area_mid_right/np.pi)
+            else:
+                areas_right.append(area / (self.conversion_factor ** 2))
+
+        area_right = np.mean(self.n_closest_numbers(areas_right, self.n_ellipses))
+        rb_right = (area_right/(np.pi*ra_right))
+
+        v_ext_left = (4 / 3) * np.pi * (ra_left * ra_left * rb_left)
+        v_ext_right = (4 / 3) * np.pi * (ra_right * ra_right * rb_right)
+
+        v_int_right = (4 / 3) * np.pi * ((ra_right-t_final) * (ra_right-t_final) * (rb_right-t_final))
+        v_wall = v_ext_right - v_int_right
+        v_int_left = v_ext_left - v_wall
+
+        print("Radius left", ra_left, rb_left)
+        print("Radius right", ra_right, rb_right)
+        print("Mid area", area_mid_left, area_mid_right)
+        print("Areas", area_left, area_right)
+        print("V_ext", v_ext_left, v_ext_right)
+        print("V_wall", v_wall)
+        print("V_int", v_int_left, v_int_right)
+
+
+        coeffs = [1, (-2*ra_left-rb_left), (ra_left**2+2*ra_left*rb_left), -(ra_left**2)*rb_left+(3/4)*(1/np.pi)*(v_ext_left-v_wall)]
+        roots = np.roots(coeffs)
+        for r in roots:
+            if not np.iscomplex(r):
+                t_left = float(r)
+
+        print("Thickness", t_left, t_final)
+
+        frames = np.arange(self.left_index, self.right_index+1)
+
+        start = self.left_index - self.trim_start
+        stop = self.right_index - self.trim_start + 1
+
+        print(start, stop)
+
+        t_trimmed = self.trimmed_data["t"][start:stop]
+        p_trimmed = self.trimmed_data["p"][start:stop]
+        p_zeroed = self.zeroed_data["p"][start:stop]
+        p_smoothed = self.smoothed_data["p"][start:stop]
+        #v_infused = np.array(t_trimmed) * self.infusion_rate
+        #v_resid = v_int_right - np.max(v_infused)
+        #v_corrected = v_infused + v_resid
+
+        thickness = np.linspace(t_left, t_final, len(frames))  # Assume linear
+
+        # volume = np.linspace(v_ext_left, v_ext_right, len(frames))
+        # ra = np.linspace(ra_left, ra_right, len(frames))
+        # rb = np.linspace(rb_left, rb_right, len(frames))
+        # thickness_corrected = []
+        # for i, v in enumerate(volume):
+        #     coeffs = [1, (-2 * ra[i] - rb[i]), (ra[i] ** 2 + 2 * ra[i] * rb[i]),
+        #               -(ra[i] ** 2) * rb[i] + (3 / 4) * (1 / np.pi) * (v - v_wall)]
+        #     roots = np.roots(coeffs)
+        #     for r in roots:
+        #         if not np.iscomplex(r):
+        #             thickness_corrected.append(float(r))  # Goes negative
+
+
+        diameter = 2*((np.linspace(v_int_left, v_int_right, len(frames))*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear
+
+        #diameter = 2*((((v_infused + v_int_left)*3)/(4*np.pi))**(1/3))
+        stretch = diameter / diameter[0]
+        stress = (np.array(p_smoothed)*self.MMHG2KPA)*(diameter/2)/(2*thickness)
+
+        data = np.column_stack([
+            frames,
+            t_trimmed,
+            p_trimmed,
+            p_zeroed,
+            p_smoothed,
+            thickness,
+            diameter,
+            stretch,
+            stress,
+        ])
+
+        # Optional: replace inf with nan so Excel doesn't choke
+        data = np.where(np.isfinite(data), data, np.nan)
+
+        # Prepare header
+        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter,stretch,stress"
+
+        # Ensure parent dir exists
+        filepath = Path(f"data/{os.path.splitext(os.path.basename(self.csv_path))[0]}_results.csv")
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save CSV (Excel-friendly)
+        # fmt="%.10g" keeps numbers compact but precise; tweak if you want more/less precision
+        np.savetxt(
+            filepath,
+            data,
+            delimiter=",",
+            header=header,
+            comments="",  # avoid '# ' prefix in header
+            fmt="%.10g",
+        )
+
+        results_output = {"first": {
+                                    "Pressure": self.initial_pressure,
+                                    "Frame/Row": self.left_index,
+                                    "Radius a": ra_left,
+                                    "Radius b": rb_left,
+                                    "Wall Thickness": t_left,
+                                    "Volume": v_ext_left,
+                                    "V_wall": v_wall,
+                                    "V_lumen": v_int_left,
+        },
+            "last": {
+                "Pressure": self.final_pressure,
+                "Frame/Row": self.right_index,
+                "Radius a": ra_right,
+                "Radius b": rb_right,
+                "Wall Thickness": t_final,
+                "Volume": v_ext_right,
+                "V_wall": v_wall,
+                "V_lumen": v_int_right,
+            }
+        }
+
+        self.notify_observers("results_updated", results_output)
+
+
+
+
+
+

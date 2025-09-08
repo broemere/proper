@@ -100,7 +100,7 @@ def smooth_data(data, method, r):
     else:
         #return ui.notify("SMOOTHING ERROR: INCORRECT METHOD")
         print("Smoothing Error")
-    return {"t": data["t"], "p": [round(x, 2) for x in new_p]}
+    return {"t": data["t"], "p": np.clip([round(x, 2) for x in new_p], 0, None)}
 
 
 def zero_data(data, method, r):

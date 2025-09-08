@@ -1,5 +1,5 @@
 import logging
-from PySide6.QtCore import Slot, Signal, QEvent
+from PySide6.QtCore import Slot, Signal, QEvent, QSettings
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QTabWidget, QMessageBox, QApplication, QLineEdit, \
     QHBoxLayout, QLabel, QSizePolicy
 from data_pipeline import DataPipeline
@@ -26,7 +26,7 @@ class AnalysisSessionWidget(QWidget):
     """
     tab_name_requested = Signal(str)
 
-    def __init__(self, task_manager: TaskManager, parent=None):
+    def __init__(self, task_manager: TaskManager, settings: QSettings, parent=None):
         """
         Initializes the session widget.
 
@@ -36,6 +36,7 @@ class AnalysisSessionWidget(QWidget):
         """
         super().__init__(parent)
         self.task_manager = task_manager
+        self.settings = settings
         self.pipeline = DataPipeline()
         self.pipeline.task_manager = self.task_manager
 
@@ -129,7 +130,7 @@ class AnalysisSessionWidget(QWidget):
         self.analysis_tabs.addTab(self.area_tab_left, "⭕ Area")
         self.thickness_tab = ThicknessTab(self.pipeline)
         self.analysis_tabs.addTab(self.thickness_tab, "✒️ Thickness")
-        self.export_tab = ExportTab(self.pipeline) # Assuming this is correct from original
+        self.export_tab = ExportTab(self.pipeline, self.settings) # Assuming this is correct from original
         self.analysis_tabs.addTab(self.export_tab, "📦 Export")
 
         self.analysis_tabs.setCurrentIndex(0)
