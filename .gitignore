@@ -1,6 +1,8 @@
 .venv/
 .idea/
 data/
+build/
+dist/
 __pycache__/
 *.py[cod]
 proper.log
