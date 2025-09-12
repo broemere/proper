@@ -15,6 +15,7 @@ from tabs.thresh_tab import ThreshTab
 from tabs.area_tab import AreaTab
 from tabs.thickness_tab import ThicknessTab
 from tabs.export_tab import ExportTab
+from tabs.stiffness_tab import StiffnessTab
 import os
 
 log = logging.getLogger(__name__)
@@ -37,13 +38,14 @@ class AnalysisSessionWidget(QWidget):
         super().__init__(parent)
         self.task_manager = task_manager
         self.settings = settings
-        self.pipeline = DataPipeline()
+        self.pipeline = DataPipeline(self)
         self.pipeline.task_manager = self.task_manager
 
         self.init_ui()
         self.connect_signals()
         QApplication.instance().installEventFilter(self)
         self.pipeline.register_observer("author", self.tab_author.setText)
+        self._load_settings_into_pipeline() # ⚙️ Load settings on startup
         log.info("AnalysisSessionWidget created.")
 
     def init_ui(self):
@@ -130,6 +132,8 @@ class AnalysisSessionWidget(QWidget):
         self.analysis_tabs.addTab(self.area_tab_left, "⭕ Area")
         self.thickness_tab = ThicknessTab(self.pipeline)
         self.analysis_tabs.addTab(self.thickness_tab, "✒️ Thickness")
+        self.stiffness_tab = StiffnessTab(self.pipeline) # Assuming this is correct from original
+        self.analysis_tabs.addTab(self.stiffness_tab, "〰️ Stiffness")
         self.export_tab = ExportTab(self.pipeline, self.settings) # Assuming this is correct from original
         self.analysis_tabs.addTab(self.export_tab, "📦 Export")
 
@@ -139,6 +143,25 @@ class AnalysisSessionWidget(QWidget):
         """Connects signals from widgets to the appropriate slots in this session."""
         self.file_pickers.csv_selected.connect(self.on_csv_file_selected)
         self.file_pickers.video_selected.connect(self.on_video_file_selected)
+        self.pipeline.known_length_changed.connect(self._save_known_length)
+        self.pipeline.scale_is_manual_changed.connect(self._save_scale_is_manual)
+        self.pipeline.manual_conversion_factor_changed.connect(self._save_manual_conversion_factor)
+
+    def _load_settings_into_pipeline(self):
+        """Reads values from QSettings and populates the pipeline."""
+        log.info("Loading persistent settings into data pipeline...")
+        # Use the pipeline's setter method. This will also emit the signal
+        # that the ScaleTab is listening to, automatically updating the UI.
+        known_length = self.settings.value("scale/known_length", defaultValue=0.0, type=float)
+        self.pipeline.set_known_length(known_length)
+        manual_factor = self.settings.value("scale/manual_factor", defaultValue=0.0, type=float)
+        self.pipeline.set_manual_conversion_factor(manual_factor)
+        is_manual = self.settings.value("scale/is_manual", defaultValue=False, type=bool)
+        self.pipeline.set_scale_is_manual(is_manual)
+
+        # ... load other settings for other tabs here ...
+        # export_path = self.settings.value("export/path", ...)
+        # self.pipeline.set_export_path(export_path)
 
     @Slot(str)
     def on_csv_file_selected(self, path: str):
@@ -178,3 +201,20 @@ class AnalysisSessionWidget(QWidget):
         log.info(f"HANDLER: Loading Video {path} for session.")
         self.pipeline.load_video_file(path)
         self.file_pickers.set_video_label(path)
+
+    # --- SLOTS FOR SAVING ---
+
+    @Slot(float)
+    def _save_known_length(self, length: float):
+        """Saves the known_length to settings."""
+        self.settings.setValue("scale/known_length", length)
+
+    @Slot(bool)
+    def _save_scale_is_manual(self, is_manual: bool):
+        """Saves the manual mode state to settings."""
+        self.settings.setValue("scale/is_manual", is_manual)
+
+    @Slot(float)
+    def _save_manual_conversion_factor(self, factor: float):
+        """Saves the manual conversion factor to settings."""
+        self.settings.setValue("scale/manual_factor", factor)

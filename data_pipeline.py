@@ -1,5 +1,4 @@
-from difflib import restore
-
+from PySide6.QtCore import QObject, Signal
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy
 from processing.data_loader import load_csv, frame_loader
 from collections import OrderedDict
@@ -12,8 +11,21 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-class DataPipeline:
-    def __init__(self, settings={}):
+class DataPipeline(QObject):
+    # --- SIGNALS ---
+    # Signals for fundamental inputs
+    known_length_changed = Signal(float)
+    pixel_length_changed = Signal(float)
+    scale_is_manual_changed = Signal(bool)
+    manual_conversion_factor_changed = Signal(float)
+    # Signal for the final, calculated or manually set, result
+    conversion_factor_changed = Signal(float)
+
+    left_image_changed = Signal(np.ndarray)
+
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.raw_data = {"t": [], "p": []}
         self.trimmed_data = {"t": [], "p": []}
         self.zeroed_data = {"t": [], "p": []}
@@ -34,15 +46,14 @@ class DataPipeline:
         self.zeroing_window = 7
         self.trim_start = 0
         self.trim_stop = 42
-        self.known_length = 0
-        self.conversion_factor = 1
         self._observers = {}
         self.task_manager = None
         self.VERSION = APP_VERSION
-        self.__dict__.update(settings)
 
         self.left_image: np.ndarray = None
         self.right_image: np.ndarray = None
+        self.left_threshed: np.ndarray = None
+        self.right_threshed: np.ndarray = None
 
         self.left_level_blobs: np.ndarray = None
         self.right_level_blobs: np.ndarray = None
@@ -57,6 +68,15 @@ class DataPipeline:
 
         self.infusion_rate = 0.5  # uL/sec
         self.MMHG2KPA = 1/7.501
+
+        self.pressures_of_interest = [5, 10, 15, 20, 25]
+
+        # SCALE TAB
+        self.known_length = 0.0
+        self.pixel_length = 0.0
+        self.scale_is_manual = False
+        self.manual_conversion_factor = 0.0
+        self.conversion_factor = 0.0 # The final, authoritative value
 
 
     def register_observer(self, key: str, callback):
@@ -168,10 +188,13 @@ class DataPipeline:
         if self.left_image is None:
             log.error("Did not receive left frame")
         # THE MOST IMPORTANT STEP: Notify the UI that new data is ready!
-        self.notify_observers('left_image', self.left_image)
+        #self.notify_observers('left_image', self.left_image)
+        self.left_image_changed.emit(self.left_image)
         self.frame_count = next(it)
         log.info(f"Frame count found: {self.frame_count}")
         self.set_trimming(0, self.working_length -1)
+        if self.left_image is not None and self.right_image is None:
+            self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
         #self.notify_observers('frame_count', self.frame_count)
         self.level_update()
 
@@ -207,7 +230,8 @@ class DataPipeline:
         first_frame_index = next(iter(result))
         self.left_image = result[first_frame_index]
         self.left_image_user = None
-        self.notify_observers('left_image', self.left_image)
+        #self.notify_observers('left_image', self.left_image)
+        self.left_image_changed.emit(self.left_image)
         self.level_update()
 
     def right_frame_loaded(self, result: dict):
@@ -342,15 +366,6 @@ class DataPipeline:
             right_img[mask] = self.right_thresh_blobs[mask]
         return left_img, right_img
 
-    def set_known_length(self, val):
-        self.known_length = val
-        self.notify_observers('known_length', val)
-
-    def set_conversion_factor(self, val):
-        self.conversion_factor = val
-        log.info(f"Conversion factor updated: {self.conversion_factor}")
-        self.notify_observers('conversion_factor', val)
-
     def get_state(self, debug_json=False):
         """
         Collects all serializable attributes into a dictionary for saving.
@@ -450,7 +465,8 @@ class DataPipeline:
         print("Plot data restored")
         self.notify_observers('conversion_factor', self.conversion_factor)
         self.notify_observers('author', self.author)
-        self.notify_observers('left_image', self.left_image) # Scale, frame
+        #self.notify_observers('left_image', self.left_image) # Scale, frame
+        self.left_image_changed.emit(self.left_image)
         self.notify_observers('right_image', self.right_image) # Frame, Thickness
         self.level_update()
         self.segment_image(self.left_threshed, "left")
@@ -721,6 +737,8 @@ class DataPipeline:
 
         diameter = 2*((np.linspace(v_int_left, v_int_right, len(frames))*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear
 
+        volume = np.linspace(v_int_left, v_int_right, len(frames))  # Assume linear
+
         #diameter = 2*((((v_infused + v_int_left)*3)/(4*np.pi))**(1/3))
         stretch = diameter / diameter[0]
         stress = (np.array(p_smoothed)*self.MMHG2KPA)*(diameter/2)/(2*thickness)
@@ -733,6 +751,7 @@ class DataPipeline:
             p_smoothed,
             thickness,
             diameter,
+            volume,
             stretch,
             stress,
         ])
@@ -741,11 +760,29 @@ class DataPipeline:
         data = np.where(np.isfinite(data), data, np.nan)
 
         # Prepare header
-        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter,stretch,stress"
+        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter(midwall),v_inner,stretch,stress"
 
         # Ensure parent dir exists
-        filepath = Path(f"data/{os.path.splitext(os.path.basename(self.csv_path))[0]}_results.csv")
+
+        filename = os.path.splitext(os.path.basename(self.csv_path))[0]
+        if filename.endswith("_pressure"):
+            filename = filename[:-9]
+
+        folder = os.path.dirname(self.csv_path)
+
+        filepath = Path(f"{folder}/{filename}_results.csv")
         filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        if os.path.exists(filepath):
+            print("Results already found")
+            i = 2
+            filepath = Path(f"{folder}/{filepath.stem}_{i}{filepath.suffix}")
+            print(filepath)
+            while os.path.exists(filepath):
+                print("Many results already exist")
+                i += 1
+                filepath = Path(f"{folder}/{filepath.stem[:-2]}_{i}{filepath.suffix}")
+                print(filepath)
 
         # Save CSV (Excel-friendly)
         # fmt="%.10g" keeps numbers compact but precise; tweak if you want more/less precision
@@ -783,7 +820,51 @@ class DataPipeline:
         self.notify_observers("results_updated", results_output)
 
 
+    def _recalculate_conversion_factor(self):
+        """Central calculation. Called whenever an input changes."""
+        new_factor = 0.0
+        if self.scale_is_manual:
+            new_factor = self.manual_conversion_factor
+        elif self.known_length > 0 and self.pixel_length > 0:
+            new_factor = self.pixel_length / self.known_length
 
+        # Use the main setter to update the value and emit the signal
+        self.set_conversion_factor(new_factor, force_update=True)
 
+    def set_known_length(self, length: float):
+        if self.known_length != length:
+            self.known_length = length
+            self.known_length_changed.emit(self.known_length)
+            self._recalculate_conversion_factor()
 
+    def set_pixel_length(self, length: float):
+        if self.pixel_length != length:
+            self.pixel_length = length
+            self.pixel_length_changed.emit(self.pixel_length)
+            self._recalculate_conversion_factor()
 
+    def set_scale_is_manual(self, is_manual: bool):
+        if self.scale_is_manual != is_manual:
+            self.scale_is_manual = is_manual
+            self.scale_is_manual_changed.emit(self.scale_is_manual)
+            self._recalculate_conversion_factor()
+
+    def set_manual_conversion_factor(self, factor: float):
+        """This is called when the user types in the manual spinbox."""
+        if self.manual_conversion_factor != factor:
+            self.manual_conversion_factor = factor
+            # Only recalculate if we are currently in manual mode
+            self.manual_conversion_factor_changed.emit(self.manual_conversion_factor)
+            if self.scale_is_manual:
+                self._recalculate_conversion_factor()
+
+    def set_conversion_factor(self, factor: float, force_update=False):
+        """
+        This is the final setter for the authoritative value.
+        It's called by the recalculate method or can be set directly.
+        """
+        if self.conversion_factor != factor or force_update:
+            self.conversion_factor = factor
+            log.info(f"Conversion factor updated: {self.conversion_factor}")
+            self.notify_observers('conversion_factor', factor)
+            self.conversion_factor_changed.emit(self.conversion_factor)
