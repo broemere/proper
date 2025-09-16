@@ -20,12 +20,12 @@ class ScaleTab(QWidget):
         self.init_ui()
         self.connect_signals()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        # Refresh from pipeline if an image is already available
-        current_image = self.pipeline.left_image
-        if current_image is not None:
-            self._show_scale_image(current_image)
+    # def showEvent(self, event):
+    #     super().showEvent(event)
+    #     # Refresh from pipeline if an image is already available
+    #     current_image = self.pipeline.left_image
+    #     if current_image is not None:
+    #         self._show_scale_image(current_image)
 
     def init_ui(self):
         layout = QVBoxLayout(self)

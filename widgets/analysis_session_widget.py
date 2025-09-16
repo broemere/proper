@@ -146,6 +146,7 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.known_length_changed.connect(self._save_known_length)
         self.pipeline.scale_is_manual_changed.connect(self._save_scale_is_manual)
         self.pipeline.manual_conversion_factor_changed.connect(self._save_manual_conversion_factor)
+        self.pipeline.final_pressure_changed.connect(self._save_final_pressure)
 
     def _load_settings_into_pipeline(self):
         """Reads values from QSettings and populates the pipeline."""
@@ -158,6 +159,8 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.set_manual_conversion_factor(manual_factor)
         is_manual = self.settings.value("scale/is_manual", defaultValue=False, type=bool)
         self.pipeline.set_scale_is_manual(is_manual)
+        final_pressure = self.settings.value("frame/final_pressure", defaultValue=25.0, type=float)
+        self.pipeline.set_final_pressure(final_pressure)
 
         # ... load other settings for other tabs here ...
         # export_path = self.settings.value("export/path", ...)
@@ -218,3 +221,8 @@ class AnalysisSessionWidget(QWidget):
     def _save_manual_conversion_factor(self, factor: float):
         """Saves the manual conversion factor to settings."""
         self.settings.setValue("scale/manual_factor", factor)
+
+    @Slot(float)
+    def _save_final_pressure(self, pressure: float):
+        """Saves the final_pressure to settings."""
+        self.settings.setValue("frame/final_pressure", pressure)

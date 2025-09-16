@@ -13,15 +13,27 @@ log = logging.getLogger(__name__)
 
 class DataPipeline(QObject):
     # --- SIGNALS ---
-    # Signals for fundamental inputs
+
+    state_loaded = Signal()
+
+    # Scale inputs
     known_length_changed = Signal(float)
     pixel_length_changed = Signal(float)
     scale_is_manual_changed = Signal(bool)
     manual_conversion_factor_changed = Signal(float)
-    # Signal for the final, calculated or manually set, result
     conversion_factor_changed = Signal(float)
 
+    # Frames
+    final_pressure_changed = Signal(float)
+    left_keypoint_changed = Signal(int)
+    right_keypoint_changed = Signal(int)
     left_image_changed = Signal(np.ndarray)
+    right_image_changed = Signal(np.ndarray)
+
+    # Levels
+    leveled_images = Signal(tuple)
+    brightness_changed = Signal(int)
+    contrast_changed = Signal(int)
 
 
     def __init__(self, parent=None):
@@ -197,117 +209,6 @@ class DataPipeline(QObject):
             self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
         #self.notify_observers('frame_count', self.frame_count)
         self.level_update()
-
-    def set_left_keypoint(self, index: int, load_frame: bool = True):
-        """
-        Sets the left keypoint index, validates it, and optionally loads the frame.
-        """
-        # Validate and clamp the index to be within the current trim range
-        self.left_index = max(self.trim_start, min(index, self.trim_stop))
-        log.info(f"Setting left keypoint index to: {self.left_index}")
-        if load_frame and self.video:
-            log.info(f"Dispatching frame loader for left_index: {self.left_index}")
-            self.task_manager.queue_task(
-                frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
-            )
-        # Notify UI elements that the index has changed
-        self.notify_observers('left_keypoint_changed', self.left_index)
-
-    def set_right_keypoint(self, index: int, load_frame: bool = True):
-        """
-        Sets the right keypoint index, validates it, and optionally loads the frame.
-        """
-        self.right_index = max(self.trim_start, min(index, self.trim_stop))
-        log.info(f"Setting right keypoint index to: {self.right_index}")
-        if load_frame and self.video:
-            log.info(f"Dispatching frame loader for right_index: {self.right_index}")
-            self.task_manager.queue_task(
-                frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
-            )
-        self.notify_observers('right_keypoint_changed', self.right_index)
-
-    def left_frame_loaded(self, result: dict):
-        first_frame_index = next(iter(result))
-        self.left_image = result[first_frame_index]
-        self.left_image_user = None
-        #self.notify_observers('left_image', self.left_image)
-        self.left_image_changed.emit(self.left_image)
-        self.level_update()
-
-    def right_frame_loaded(self, result: dict):
-        first_frame_index = next(iter(result))
-        self.right_image = result[first_frame_index]
-        self.right_image_user = None
-        self.notify_observers('right_image', self.right_image)
-        self.level_update()
-
-    def apply_leveling(self):
-        """Recompute transformed_image from baseline_image using current self.brightness and self.contrast (0–100)"""
-        if self.left_image is None:
-            return
-
-        default_min, default_max = 0.0, 255.0
-        full_range = default_max - default_min  # 255
-        slider_range = 100.0
-        mid = slider_range / 2.0  # 50
-        # invert so slider=100 → newCenter=0, slider=0 → newCenter=255
-        inv_b = slider_range - self.brightness
-        new_center = default_min + full_range * (inv_b / slider_range)
-        # contrast slope like ImageJ
-        eps = 1e-4
-        c = float(self.contrast)
-        if c <= mid:
-            slope = c / mid
-        else:
-            slope = mid / ((slider_range - c) + eps)
-        new_min = new_center - (0.5 * full_range) / slope
-        new_max = new_center + (0.5 * full_range) / slope
-        denom = (new_max - new_min) if (new_max - new_min) != 0 else eps
-
-        # linear map [new_min,new_max] → [0,255], per‐channel
-        left_img = self.left_image.astype(np.float32)
-        left_leveled = ((left_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
-        if self.right_image is not None:
-            right_img = self.right_image.astype(np.float32)
-            right_leveled = ((right_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
-        else:
-            right_leveled = None
-
-        left_leveled, right_leveled = self.paste_level_blobs(left_leveled, right_leveled)
-
-        self.notify_observers('leveled', [left_leveled, right_leveled])
-        return [left_leveled, right_leveled]
-
-    def apply_thresh(self, frame_data=None):
-        """
-        Apply a binary threshold to the *transformed_image*, not baseline.
-        Pixels >= self.threshold become 255; others 0.
-        """
-        if frame_data is None:
-            left_leveled = self.left_leveled
-            right_leveled = self.right_leveled
-        else:
-            left_leveled, right_leveled = frame_data
-
-        if left_leveled is None:
-            return
-
-        th = self.threshold  # (for a 2D grayscale image)
-        self.left_threshed = np.where(left_leveled >= th, 255, 0).astype(np.uint8)
-
-        if self.right_image is not None:
-            self.right_threshed = np.where(right_leveled >= th, 255, 0).astype(np.uint8)
-        else:
-            self.right_threshed = None
-
-        self.left_threshed, self.right_threshed = self.paste_thresh_blobs(self.left_threshed, self.right_threshed)
-
-        self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
-
-    def level_update(self):
-        frames = self.apply_leveling()
-        self.apply_thresh(frames)
-        self.left_leveled, self.right_leveled = frames
 
     def segment_image(self, arr, left_right):
         log.info("Queueing label_image task for worker.")
@@ -597,54 +498,6 @@ class DataPipeline(QObject):
         else:
             return min(len(self.raw_data["t"]), self.frame_count)
 
-    def _find_closest_index_by_pressure(self, target_pressure: float) -> int:
-        """
-        Finds the index in the smoothed data closest to a target pressure.
-
-        Returns:
-            int: The absolute index (relative to raw_data) of the closest point.
-        """
-        if self.smoothed_data['p'].size == 0:
-            log.warning("Cannot find pressure; smoothed data is empty.")
-            return self.trim_start  # Return a safe default
-
-        # Use numpy for efficient searching
-        pressure_array = np.asarray(self.smoothed_data['p'])
-
-        # Find the index in the *trimmed* data array that has the minimum difference
-        relative_index = np.argmin(np.abs(pressure_array - target_pressure))
-
-        # --- CRITICAL STEP ---
-        # Convert the relative index back to an absolute index by adding the trim_start offset
-        absolute_index = self.trim_start + relative_index
-
-        return int(absolute_index)
-
-    def find_and_set_keypoint_by_pressure(self, side: str, pressure: float):
-        """
-        Public method for the UI to find a keypoint by its pressure value.
-
-        Args:
-            side (str): Either 'left' or 'right'.
-            pressure (float): The target pressure to find.
-        """
-        log.info(f"UI requested to find keypoint for '{side}' side at {pressure} mmHg.")
-
-        # First, store the user's requested pressure so it's saved in the state
-        if side == 'left':
-            self.initial_pressure = pressure
-        elif side == 'right':
-            self.final_pressure = pressure
-
-        # Find the absolute index corresponding to that pressure
-        found_index = self._find_closest_index_by_pressure(pressure)
-
-        # Use our existing, validated setters to update the state and load the frame
-        if side == 'left':
-            self.set_left_keypoint(found_index)
-        elif side == 'right':
-            self.set_right_keypoint(found_index)
-
     def generate_report(self):
         print("Indices:", self.left_index, self.right_index)
 
@@ -820,6 +673,8 @@ class DataPipeline(QObject):
         self.notify_observers("results_updated", results_output)
 
 
+    ### SCALE TAB
+
     def _recalculate_conversion_factor(self):
         """Central calculation. Called whenever an input changes."""
         new_factor = 0.0
@@ -868,3 +723,220 @@ class DataPipeline(QObject):
             log.info(f"Conversion factor updated: {self.conversion_factor}")
             self.notify_observers('conversion_factor', factor)
             self.conversion_factor_changed.emit(self.conversion_factor)
+
+
+    ### FRAME TAB
+
+    def set_final_pressure(self, pressure: float):
+        """Sets the final pressure and emits a signal if it changes."""
+        if self.final_pressure != pressure:
+            self.final_pressure = pressure
+            self.final_pressure_changed.emit(self.final_pressure)
+
+    def set_left_keypoint(self, index: int, load_frame: bool = True):
+        """
+        Sets the left keypoint index, validates it, and optionally loads the frame.
+        """
+        # Validate and clamp the index to be within the current trim range
+        self.left_index = max(self.trim_start, min(index, self.trim_stop))
+        log.info(f"Setting left keypoint index to: {self.left_index}")
+        if load_frame and self.video:
+            log.info(f"Dispatching frame loader for left_index: {self.left_index}")
+            self.task_manager.queue_task(
+                frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
+            )
+        self.left_keypoint_changed.emit(self.right_index)
+
+    def set_right_keypoint(self, index: int, load_frame: bool = True):
+        """
+        Sets the right keypoint index, validates it, and optionally loads the frame.
+        """
+        self.right_index = max(self.trim_start, min(index, self.trim_stop))
+        log.info(f"Setting right keypoint index to: {self.right_index}")
+        if load_frame and self.video:
+            log.info(f"Dispatching frame loader for right_index: {self.right_index}")
+            self.task_manager.queue_task(
+                frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
+            )
+        self.right_keypoint_changed.emit(self.right_index)
+
+    def left_frame_loaded(self, result: dict):
+        first_frame_index = next(iter(result))
+        self.left_image = result[first_frame_index]
+        self.left_image_user = None
+        self.left_image_changed.emit(self.left_image)
+        self.level_update()
+
+    def right_frame_loaded(self, result: dict):
+        first_frame_index = next(iter(result))
+        self.right_image = result[first_frame_index]
+        self.right_image_user = None
+        self.right_image_changed.emit(self.right_image)
+        self.level_update()
+
+    def _find_closest_index_by_pressure(self, target_pressure: float) -> int:
+        """
+        Finds the index in the smoothed data closest to a target pressure.
+        Returns:
+            int: The absolute index (relative to raw_data) of the closest point.
+        """
+        if self.smoothed_data['p'].size == 0:
+            log.warning("Cannot find pressure; smoothed data is empty.")
+            return self.trim_start  # Return a safe default
+        # Use numpy for efficient searching
+        pressure_array = np.asarray(self.smoothed_data['p'])
+        # Find the index in the *trimmed* data array that has the minimum difference
+        relative_index = np.argmin(np.abs(pressure_array - target_pressure))
+        # Convert the relative index back to an absolute index by adding the trim_start offset
+        absolute_index = self.trim_start + relative_index
+        return int(absolute_index)
+
+    def find_and_set_keypoint_by_pressure(self, side: str, pressure: float):
+        """
+        Public method for the UI to find a keypoint by its pressure value.
+        Args:
+            side (str): Either 'left' or 'right'.
+            pressure (float): The target pressure to find.
+        """
+        log.info(f"UI requested to find keypoint for '{side}' side at {pressure} mmHg.")
+        # First, store the user's requested pressure so it's saved in the state
+        if side == 'left':
+            self.initial_pressure = pressure
+        elif side == 'right':
+            self.final_pressure = pressure  # Possible duplicate with set_final_pressure
+        # Find the absolute index corresponding to that pressure
+        found_index = self._find_closest_index_by_pressure(pressure)
+        # Use our existing, validated setters to update the state and load the frame
+        if side == 'left':
+            self.set_left_keypoint(found_index)
+        elif side == 'right':
+            self.set_right_keypoint(found_index)
+
+    def get_pressure_display_data(self, index: int) -> dict:
+        """
+        Processes and returns the pressure data needed for the UI display.
+        The Model is responsible for this logic.
+        """
+        if not self.csv_path or "p" not in self.smoothed_data:
+            return {"pre": "", "current": "0.00", "post": ""}
+        # All the slicing and formatting logic is now here
+        new_index = index - self.trim_start
+        p_data = self.smoothed_data["p"]
+        pre_vals = p_data[max(0, new_index - 3):new_index]
+        current_val = p_data[new_index]
+        post_vals = p_data[new_index+1:new_index+4]
+        return {
+            "pre": ", ".join(f"{x:.2f}" for x in pre_vals),
+            "current": f"{current_val:.2f}",
+            "post": ", ".join(f"{x:.2f}" for x in post_vals)
+        }
+
+
+    ### LEVEL TAB
+
+    def set_brightness(self, value: int):
+        """Sets the brightness level, emits a signal, and triggers an update."""
+        if self.brightness != value:
+            self.brightness = value
+            self.brightness_changed.emit(self.brightness)
+            self.level_update()
+
+    def set_contrast(self, value: int):
+        """Sets the contrast level, emits a signal, and triggers an update."""
+        if self.contrast != value:
+            self.contrast = value
+            self.contrast_changed.emit(self.contrast)
+            self.level_update()
+
+    def reset_levels(self):
+        """Resets all level-related parameters to their defaults."""
+        self.set_brightness(50)
+        self.set_contrast(50)
+        self.left_level_blobs = None
+        self.right_level_blobs = None
+        self.level_update()
+
+    def update_level_blobs(self, side: str, image_array: np.ndarray):
+        """Handles the logic of merging a new drawing into the existing blobs."""
+        if side == "left":
+            if self.left_level_blobs is not None:
+                mask = (image_array != 127)  # Logic is now inside the model
+                self.left_level_blobs[mask] = image_array[mask]
+            else:
+                self.left_level_blobs = image_array
+        elif side == "right":
+            if self.right_level_blobs is not None:
+                mask = (image_array != 127)  # Logic is now inside the model
+                self.right_level_blobs[mask] = image_array[mask]
+            else:
+                self.right_level_blobs = image_array
+        self.level_update()
+
+    def level_update(self):
+        frames = self.apply_leveling()
+        self.apply_thresh(frames)
+        self.left_leveled, self.right_leveled = frames
+
+    def apply_leveling(self):
+        """Recompute transformed_image from baseline_image using current self.brightness and self.contrast (0–100)"""
+        if self.left_image is None:
+            return
+
+        default_min, default_max = 0.0, 255.0
+        full_range = default_max - default_min  # 255
+        slider_range = 100.0
+        mid = slider_range / 2.0  # 50
+        # invert so slider=100 → newCenter=0, slider=0 → newCenter=255
+        inv_b = slider_range - self.brightness
+        new_center = default_min + full_range * (inv_b / slider_range)
+        # contrast slope like ImageJ
+        eps = 1e-4
+        c = float(self.contrast)
+        if c <= mid:
+            slope = c / mid
+        else:
+            slope = mid / ((slider_range - c) + eps)
+        new_min = new_center - (0.5 * full_range) / slope
+        new_max = new_center + (0.5 * full_range) / slope
+        denom = (new_max - new_min) if (new_max - new_min) != 0 else eps
+
+        # linear map [new_min,new_max] → [0,255], per‐channel
+        left_img = self.left_image.astype(np.float32)
+        left_leveled = ((left_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
+        if self.right_image is not None:
+            right_img = self.right_image.astype(np.float32)
+            right_leveled = ((right_img - new_min) / denom * 255.0).clip(0, 255).astype(np.uint8)
+        else:
+            right_leveled = None
+
+        left_leveled, right_leveled = self.paste_level_blobs(left_leveled, right_leveled)
+
+        self.leveled_images.emit((left_leveled, right_leveled))
+        return [left_leveled, right_leveled]
+
+    def apply_thresh(self, frame_data=None):
+        """
+        Apply a binary threshold to the *transformed_image*, not baseline.
+        Pixels >= self.threshold become 255; others 0.
+        """
+        if frame_data is None:
+            left_leveled = self.left_leveled
+            right_leveled = self.right_leveled
+        else:
+            left_leveled, right_leveled = frame_data
+
+        if left_leveled is None:
+            return
+
+        th = self.threshold  # (for a 2D grayscale image)
+        self.left_threshed = np.where(left_leveled >= th, 255, 0).astype(np.uint8)
+
+        if self.right_image is not None:
+            self.right_threshed = np.where(right_leveled >= th, 255, 0).astype(np.uint8)
+        else:
+            self.right_threshed = None
+
+        self.left_threshed, self.right_threshed = self.paste_thresh_blobs(self.left_threshed, self.right_threshed)
+
+        self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
+
