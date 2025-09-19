@@ -20,6 +20,8 @@ import os
 
 log = logging.getLogger(__name__)
 
+video_formats = [".avi", ".mkv", ".tif", ".tiff"]
+
 class AnalysisSessionWidget(QWidget):
     """
     A widget that encapsulates a single, self-contained analysis session.
@@ -141,8 +143,8 @@ class AnalysisSessionWidget(QWidget):
 
     def connect_signals(self):
         """Connects signals from widgets to the appropriate slots in this session."""
-        self.file_pickers.csv_selected.connect(self.on_csv_file_selected)
-        self.file_pickers.video_selected.connect(self.on_video_file_selected)
+        self.file_pickers.csv_selected.connect(self.on_file_selected)
+        self.file_pickers.video_selected.connect(self.on_file_selected)
         self.pipeline.known_length_changed.connect(self._save_known_length)
         self.pipeline.scale_is_manual_changed.connect(self._save_scale_is_manual)
         self.pipeline.manual_conversion_factor_changed.connect(self._save_manual_conversion_factor)
@@ -167,6 +169,13 @@ class AnalysisSessionWidget(QWidget):
         # self.pipeline.set_export_path(export_path)
 
     @Slot(str)
+    def on_file_selected(self, path: str):
+        filename, ext = os.path.splitext(path)
+        if ext.lower() in video_formats:
+            self.on_video_file_selected(path)
+        elif ext.lower() == ".csv":
+            self.on_csv_file_selected(path)
+
     def on_csv_file_selected(self, path: str):
         """Handles the selection of a CSV file for this session."""
         log.info(f"Session received CSV file path: {path}")
@@ -189,7 +198,6 @@ class AnalysisSessionWidget(QWidget):
         # Emit the signal to request the parent change the tab name
         self.tab_name_requested.emit(base_name)
 
-    @Slot(str)
     def on_video_file_selected(self, path: str):
         """Handles the selection of a video file for this session."""
         log.info(f"Session received video file path: {path}")

@@ -8,6 +8,7 @@ from data_pipeline import DataPipeline
 import numpy as np
 from widgets.scale_widget import ScaledLineCanvas
 from processing.data_transform import numpy_to_qpixmap
+from processing.resource_loader import resource_path
 import logging
 log = logging.getLogger(__name__)
 
@@ -41,10 +42,10 @@ class ScaleTab(QWidget):
         self.refresh_btn = QPushButton(self.style().standardIcon(QStyle.SP_BrowserReload), "")
         self.refresh_btn.setToolTip("Reload original image and clear zoom/line.")
         ctrl_row.addWidget(self.refresh_btn)
-        self.zoom_btn = QPushButton(QIcon("resources/zoom.png"), "")
+        self.zoom_btn = QPushButton(QIcon(resource_path("resources/zoom.png")), "")
         self.zoom_btn.setToolTip("Zoom Mode")
         self.zoom_btn.setCheckable(True)
-        self.line_btn = QPushButton(QIcon("resources/scale.png"), "")
+        self.line_btn = QPushButton(QIcon(resource_path("resources/scale.png")), "")
         self.line_btn.setToolTip("Line Drawing Mode")
         self.line_btn.setCheckable(True)
         self.mode_group = QButtonGroup(self)

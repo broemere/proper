@@ -42,7 +42,7 @@ def find_and_prompt_for_csv(parent: QWidget, video_path: str) -> str | None:
 def _look_for_video(path):
     p      = Path(path)
     stems  = [p.stem, p.stem.replace("_pressure", "_video")]
-    exts   = [".avi", ".mkv", ".tif"]
+    exts   = [".avi", ".mkv", ".tif", ".tiff"]
 
     for stem in stems:
         for ext in exts:
