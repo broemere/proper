@@ -8,6 +8,7 @@ import json
 import os
 from config import APP_VERSION
 from pathlib import Path
+from scipy.interpolate import make_splrep, sproot
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,14 @@ class DataPipeline(QObject):
     leveled_images = Signal(tuple)
     brightness_changed = Signal(int)
     contrast_changed = Signal(int)
+
+    # Threshold
+    threshed_images = Signal(tuple)
+    threshold_changed = Signal(int)
+
+    # Area
+    visualization_changed = Signal(dict)
+    area_data_changed = Signal(str, object)
 
 
     def __init__(self, parent=None):
@@ -62,15 +71,15 @@ class DataPipeline(QObject):
         self.task_manager = None
         self.VERSION = APP_VERSION
 
-        self.left_image: np.ndarray = None
-        self.right_image: np.ndarray = None
-        self.left_threshed: np.ndarray = None
-        self.right_threshed: np.ndarray = None
+        self.left_image: np.ndarray | None = None
+        self.right_image: np.ndarray | None = None
+        self.left_threshed: np.ndarray | None = None
+        self.right_threshed: np.ndarray | None = None
 
-        self.left_level_blobs: np.ndarray = None
-        self.right_level_blobs: np.ndarray = None
-        self.left_thresh_blobs: np.ndarray = None
-        self.right_thresh_blobs: np.ndarray = None
+        self.left_level_blobs: np.ndarray | None = None
+        self.right_level_blobs: np.ndarray | None = None
+        self.left_thresh_blobs: np.ndarray | None = None
+        self.right_thresh_blobs: np.ndarray | None = None
 
         self.MAX_MARKERS = 5
         self.area_data_left = OrderedDict()  # {blob_id: [area, cx, cy, 'Label']}
@@ -89,6 +98,10 @@ class DataPipeline(QObject):
         self.scale_is_manual = False
         self.manual_conversion_factor = 0.0
         self.conversion_factor = 0.0 # The final, authoritative value
+
+        # AREA TAB
+        self.left_threshed_old: np.ndarray | None = None
+        self.right_threshed_old: np.ndarray | None = None
 
 
     def register_observer(self, key: str, callback):
@@ -166,22 +179,17 @@ class DataPipeline(QObject):
     def get_data(self, data_version: str):
         return getattr(self, f"{data_version}_data", {})
 
-    # def load_video_file(self, signals):
-    #     frame_loader(signals, self.video, [self.trim_start, self.final_index])
     def load_video_file(self, file_path: str, index=None):
         self.video = file_path
         if index is None:
-            initial_frame = self.trim_start
-
-        #frame_loader(None, self.video, [middle_frame])
+            index = self.trim_start
         self.task_manager.queue_task(
             frame_loader,  # The function to run
             self.video,  # This will be the 'vid_file' argument
-            [initial_frame],  # This will be the 'frame_indices' argument
+            [index],  # This will be the 'frame_indices' argument
             True,
             on_result=self.initial_frame_loaded # Optional: a method in DataPipeline to handle the result
         )
-        #self.notify_observers('video', None)
 
     def initial_frame_loaded(self, result: dict):
         """
@@ -189,8 +197,6 @@ class DataPipeline(QObject):
         'result' is the dictionary of NumPy arrays returned by frame_loader.
         """
         log.info(f"Received {len(result)-1} loaded frames from worker.")
-
-        # We need to know which frame we got. The dictionary keys help here.
         if not result:
             log.warning("Frame loader returned no frames.")
             return
@@ -199,73 +205,30 @@ class DataPipeline(QObject):
         self.left_image = result[first_frame_index]
         if self.left_image is None:
             log.error("Did not receive left frame")
-        # THE MOST IMPORTANT STEP: Notify the UI that new data is ready!
-        #self.notify_observers('left_image', self.left_image)
         self.left_image_changed.emit(self.left_image)
         self.frame_count = next(it)
         log.info(f"Frame count found: {self.frame_count}")
         self.set_trimming(0, self.working_length -1)
         if self.left_image is not None and self.right_image is None:
             self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
-        #self.notify_observers('frame_count', self.frame_count)
         self.level_update()
 
-    def segment_image(self, arr, left_right):
-        log.info("Queueing label_image task for worker.")
-        self.task_manager.queue_task(
-            label_image,  # The function to run
-            arr,
-            left_right,
-            on_result=self.image_segmented # Optional: a method in DataPipeline to handle the result
-        )
+    @property
+    def working_length(self) -> int:
+        """
+        Returns the effective number of samples for analysis, which is the
+        minimum of the CSV data length and the video frame count.
+        Returns 0 if either data source is not loaded.
+        """
+        if not self.raw_data["t"] and self.frame_count == 0:
+            return 0
 
-    def image_segmented(self, result):
-        """Handles the result from the label worker and starts the visualization task."""
-        if result is not None:
-            labels, left_right = result
-            log.info("Received segmentation. Queueing visualization task.")
-
-            self.task_manager.queue_task(
-                create_visual_from_labels,
-                labels,
-                left_right, # Pass the labels array to the worker
-                on_result=self._visualization_created
-            )
+        if self.frame_count == 0:
+            return len(self.raw_data["t"])
+        elif not self.raw_data["t"]:
+            return self.frame_count
         else:
-            log.warning("Received None from label worker, aborting visualization.")
-
-    def _visualization_created(self, result):
-        """Handles the result from the visualization worker."""
-        if result and result['visual'] is not None:
-            log.info("Received color visualization from worker.")
-            # Notify the UI with the dictionary containing both arrays
-            self.notify_observers('visualization_ready', result)
-        else:
-            log.warning("Visualization worker failed or returned no data.")
-
-    def paste_level_blobs(self, left_img, right_img):
-        if self.left_level_blobs is not None:
-            white = np.max(left_img)
-            black = np.min(left_img)
-            mask = (self.left_level_blobs != 127)
-            clamped = np.clip(self.left_level_blobs, black, white)
-            left_img[mask] = clamped[mask]
-        if self.right_level_blobs is not None:
-            white = np.max(right_img)
-            black = np.min(right_img)
-            mask = (self.right_level_blobs != 127)
-            clamped = np.clip(self.right_level_blobs, black, white)
-            right_img[mask] = clamped[mask]
-        return left_img, right_img
-
-    def paste_thresh_blobs(self, left_img, right_img):
-        if self.left_thresh_blobs is not None:
-            mask = (self.left_thresh_blobs != 127)
-            left_img[mask] = self.left_thresh_blobs[mask]
-        if self.right_thresh_blobs is not None:
-            mask = (self.right_thresh_blobs != 127)
-            right_img[mask] = self.right_thresh_blobs[mask]
-        return left_img, right_img
+            return min(len(self.raw_data["t"]), self.frame_count)
 
     def get_state(self, debug_json=False):
         """
@@ -380,77 +343,6 @@ class DataPipeline(QObject):
         self.author = new_author
         print(self.author)
 
-    def add_area_data(self, left_right: str, blob_props: list):
-        """
-        Adds blob data using an OrderedDict to enforce a FIFO size limit.
-        """
-        blob_id, area, cx, cy = blob_props
-        data_store = self.area_data_left if left_right == 'left' else self.area_data_right
-
-        # If the user re-clicks an existing blob, move it to the end (making it the newest)
-        if blob_id in data_store:
-            data_store.move_to_end(blob_id)
-
-        # Add or update the blob data
-        data_store[blob_id] = [area, cx, cy, ""]
-
-        # 3. Enforce the size limit with FIFO
-        # If the dictionary is now over the max size, pop the oldest item.
-        if len(data_store) > self.MAX_MARKERS:
-            # .popitem(last=False) removes the first item inserted (FIFO)
-            data_store.popitem(last=False)
-
-        # Recalculate labels if we have a full set of 5
-        if len(data_store) == self.MAX_MARKERS:
-            self._calculate_and_assign_labels(data_store)
-
-        self.notify_observers('area_data_updated', left_right)
-
-    def _calculate_and_assign_labels(self, data_store: dict):
-        """
-        Calculates and assigns positional labels sequentially to prevent overwrites
-        and handle "corner cases" correctly.
-        """
-        if len(data_store) != self.MAX_MARKERS:
-            return
-
-        # First, clear all previous labels to ensure a clean slate
-        for blob_id in data_store:
-            data_store[blob_id][3] = ""
-
-        # Create a mutable list of unlabeled blobs with their properties
-        # Format: [(blob_id, cx, cy), ...]
-        unlabeled_blobs = [
-            (blob_id, props[1], props[2]) for blob_id, props in data_store.items()
-        ]
-
-        # --- Find, label, and remove blobs one by one ---
-
-        # Find Left-most blob from all candidates
-        left_blob = min(unlabeled_blobs, key=lambda b: b[1])
-        data_store[left_blob[0]][3] = "Left"
-        unlabeled_blobs.remove(left_blob)
-
-        # Find Right-most blob from the *remaining* candidates
-        right_blob = max(unlabeled_blobs, key=lambda b: b[1])
-        data_store[right_blob[0]][3] = "Right"
-        unlabeled_blobs.remove(right_blob)
-
-        # Find Top-most blob from the *remaining* candidates
-        top_blob = min(unlabeled_blobs, key=lambda b: b[2])
-        data_store[top_blob[0]][3] = "Top"
-        unlabeled_blobs.remove(top_blob)
-
-        # Find Bottom-most blob from the *remaining* candidates
-        bottom_blob = max(unlabeled_blobs, key=lambda b: b[2])
-        data_store[bottom_blob[0]][3] = "Bottom"
-        unlabeled_blobs.remove(bottom_blob)
-
-        # The last remaining blob must be the Middle one
-        if unlabeled_blobs:
-            middle_blob_id = unlabeled_blobs[0][0]
-            data_store[middle_blob_id][3] = "Middle"
-
     def set_thickness_data(self, lengths: list[float]):
         """
         Replaces the current thickness data with a new, complete list of line lengths.
@@ -481,22 +373,73 @@ class DataPipeline(QObject):
 
         return best_group
 
-    @property
-    def working_length(self) -> int:
-        """
-        Returns the effective number of samples for analysis, which is the
-        minimum of the CSV data length and the video frame count.
-        Returns 0 if either data source is not loaded.
-        """
-        if not self.raw_data["t"] and self.frame_count == 0:
-            return 0
+    def pad_array(self, arr, target_len):
+        """Pads a short array to a target length with empty strings."""
+        # Create a new array of the target length, filled with empty strings
+        # and using the 'object' dtype to allow for mixed types.
+        padded_arr = np.full(target_len, np.nan, dtype=float)
 
-        if self.frame_count == 0:
-            return len(self.raw_data["t"])
-        elif not self.raw_data["t"]:
-            return self.frame_count
-        else:
-            return min(len(self.raw_data["t"]), self.frame_count)
+        # Copy the original data into the beginning of the new array
+        padded_arr[:len(arr)] = arr
+
+        return padded_arr
+
+    def get_stress_stretch(self):
+        data = self.smoothed_data
+        t_final = np.mean(self.n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
+        blobs_left = self.area_data_left
+        blobs_right = self.area_data_right
+
+        areas_left = []
+        areas_right = []
+
+        for props in blobs_left.values():
+            area, cx, cy, label = props
+            if label == "Middle":
+                area_mid_left = area / (self.conversion_factor ** 2)
+                ra_left = np.sqrt(area_mid_left/np.pi)
+            else:
+                areas_left.append(area / (self.conversion_factor ** 2))
+
+        area_left = np.mean(self.n_closest_numbers(areas_left, self.n_ellipses))
+        rb_left = (area_left/(np.pi*ra_left))
+
+        for props in blobs_right.values():
+            area, cx, cy, label = props
+            if label == "Middle":
+                area_mid_right = area / (self.conversion_factor ** 2)
+                ra_right = np.sqrt(area_mid_right/np.pi)
+            else:
+                areas_right.append(area / (self.conversion_factor ** 2))
+
+        area_right = np.mean(self.n_closest_numbers(areas_right, self.n_ellipses))
+        rb_right = (area_right/(np.pi*ra_right))
+
+        v_ext_left = (4 / 3) * np.pi * (ra_left * ra_left * rb_left)
+        v_ext_right = (4 / 3) * np.pi * (ra_right * ra_right * rb_right)
+
+        v_int_right = (4 / 3) * np.pi * ((ra_right-t_final) * (ra_right-t_final) * (rb_right-t_final))
+        v_wall = v_ext_right - v_int_right
+        v_int_left = v_ext_left - v_wall
+
+        coeffs = [1, (-2*ra_left-rb_left), (ra_left**2+2*ra_left*rb_left), -(ra_left**2)*rb_left+(3/4)*(1/np.pi)*(v_ext_left-v_wall)]
+        roots = np.roots(coeffs)
+        for r in roots:
+            if not np.iscomplex(r):
+                t_left = float(r)
+
+        frames = np.arange(self.left_index, self.right_index+1)
+        start = self.left_index - self.trim_start
+        stop = self.right_index - self.trim_start + 1
+        p_smoothed = self.smoothed_data["p"][start:stop]
+        thickness = np.linspace(t_left, t_final, len(frames))  # Assume linear
+        diameter = 2*((np.linspace(v_int_left, v_int_right, len(frames))*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear
+        initial_diameter = diameter[0]
+        stretch = diameter / initial_diameter
+        stress = (np.array(p_smoothed)*self.MMHG2KPA)*(diameter/2)/(2*thickness)
+
+        self.stress = stress
+        self.stretch = stretch
 
     def generate_report(self):
         print("Indices:", self.left_index, self.right_index)
@@ -593,8 +536,20 @@ class DataPipeline(QObject):
         volume = np.linspace(v_int_left, v_int_right, len(frames))  # Assume linear
 
         #diameter = 2*((((v_infused + v_int_left)*3)/(4*np.pi))**(1/3))
-        stretch = diameter / diameter[0]
+        initial_diameter = diameter[0]
+        stretch = diameter / initial_diameter
         stress = (np.array(p_smoothed)*self.MMHG2KPA)*(diameter/2)/(2*thickness)
+
+        deriv_spline = self.p_spline.derivative()
+
+
+        stiffnesses = {}
+        for p_target in self.pressures_of_interest:
+            # 3. Find the time 't' (frame index) where p(t) = p_target
+            i = np.argmin(np.abs(np.array(p_zeroed) - p_target))
+            stretch_target = stretch[i]
+            modulus = deriv_spline(stretch_target)
+            stiffnesses[str(p_target)] = {'modulus_kPa': modulus, 'stretch': stretch_target}
 
         data = np.column_stack([
             frames,
@@ -607,13 +562,16 @@ class DataPipeline(QObject):
             volume,
             stretch,
             stress,
+            self.pad_array(self.pressures_of_interest, len(frames)),
+            self.pad_array([stiffnesses[str(p)]["modulus_kPa"] for p in self.pressures_of_interest], len(frames)),
+            self.pad_array([stiffnesses[str(p)]["stretch"] for p in self.pressures_of_interest], len(frames)),
         ])
 
         # Optional: replace inf with nan so Excel doesn't choke
         data = np.where(np.isfinite(data), data, np.nan)
 
         # Prepare header
-        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter(midwall),v_inner,stretch,stress"
+        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter(midwall),v_inner,stretch,stress,pressures of interest,stiffness(kpa),stretch"
 
         # Ensure parent dir exists
 
@@ -863,19 +821,34 @@ class DataPipeline(QObject):
                 mask = (image_array != 127)  # Logic is now inside the model
                 self.left_level_blobs[mask] = image_array[mask]
             else:
-                self.left_level_blobs = image_array
+                self.left_level_blobs = image_array.astype(np.uint8)
         elif side == "right":
             if self.right_level_blobs is not None:
                 mask = (image_array != 127)  # Logic is now inside the model
                 self.right_level_blobs[mask] = image_array[mask]
             else:
-                self.right_level_blobs = image_array
+                self.right_level_blobs = image_array.astype(np.uint8)
         self.level_update()
 
     def level_update(self):
         frames = self.apply_leveling()
         self.apply_thresh(frames)
         self.left_leveled, self.right_leveled = frames
+
+    def paste_level_blobs(self, left_img, right_img):
+        if self.left_level_blobs is not None:
+            white = np.max(left_img)
+            black = np.min(left_img)
+            mask = (self.left_level_blobs != 127)
+            clamped = np.clip(self.left_level_blobs, black, white)
+            left_img[mask] = clamped[mask]
+        if self.right_level_blobs is not None:
+            white = np.max(right_img)
+            black = np.min(right_img)
+            mask = (self.right_level_blobs != 127)
+            clamped = np.clip(self.right_level_blobs, black, white)
+            right_img[mask] = clamped[mask]
+        return left_img, right_img
 
     def apply_leveling(self):
         """Recompute transformed_image from baseline_image using current self.brightness and self.contrast (0–100)"""
@@ -914,6 +887,52 @@ class DataPipeline(QObject):
         self.leveled_images.emit((left_leveled, right_leveled))
         return [left_leveled, right_leveled]
 
+
+    ### THRESHOLD TAB
+
+    def set_threshold(self, value: int):
+        """Sets the brightness level, emits a signal, and triggers an update."""
+        if self.threshold != value:
+            self.threshold = value
+            self.threshold_changed.emit(self.threshold)
+            self.apply_thresh()
+
+    def reset_thresh(self):
+        """Resets all level-related parameters to their defaults."""
+        self.set_threshold(127)
+        self.left_thresh_blobs = None
+        self.right_thresh_blobs = None
+        self.apply_thresh()
+
+    def update_thresh_blobs(self, side: str, image_array: np.ndarray):
+        """Handles the logic of merging a new drawing into the existing blobs."""
+        if side == "left":
+            if self.left_thresh_blobs is not None:
+                mask = (image_array != 127)  # Logic is now inside the model
+                self.left_thresh_blobs[mask] = image_array[mask]
+            else:
+                self.left_thresh_blobs = image_array.astype(np.uint8)
+            self.left_threshed_old = self.left_threshed.copy()
+            self.segment_image(self.left_threshed, "left")
+        elif side == "right":
+            if self.right_thresh_blobs is not None:
+                mask = (image_array != 127)  # Logic is now inside the model
+                self.right_thresh_blobs[mask] = image_array[mask]
+            else:
+                self.right_thresh_blobs = image_array.astype(np.uint8)
+            self.right_threshed_old = self.right_threshed.copy()
+            self.segment_image(self.right_threshed, "right")
+        self.apply_thresh()
+
+    def paste_thresh_blobs(self, left_img, right_img):
+        if self.left_thresh_blobs is not None:
+            mask = (self.left_thresh_blobs != 127)
+            left_img[mask] = self.left_thresh_blobs[mask]
+        if self.right_thresh_blobs is not None:
+            mask = (self.right_thresh_blobs != 127)
+            right_img[mask] = self.right_thresh_blobs[mask]
+        return left_img, right_img
+
     def apply_thresh(self, frame_data=None):
         """
         Apply a binary threshold to the *transformed_image*, not baseline.
@@ -937,6 +956,146 @@ class DataPipeline(QObject):
             self.right_threshed = None
 
         self.left_threshed, self.right_threshed = self.paste_thresh_blobs(self.left_threshed, self.right_threshed)
+        self.threshed_images.emit((self.left_threshed, self.right_threshed))
 
-        self.notify_observers('threshed', [self.left_threshed, self.right_threshed])
+
+    ### AREA TAB
+
+    def segment_image(self, arr, left_right):
+        log.info(f"Queueing segmentation ({left_right}) task.")
+        self.task_manager.queue_task(
+            label_image,  # The function to run
+            arr,
+            left_right,
+            on_result=self.image_segmented # Optional: a method in DataPipeline to handle the result
+        )
+
+    def image_segmented(self, result):
+        """Handles the result from the label worker and starts the visualization task."""
+        if result is not None:
+            labels, left_right = result
+            log.info("Received segmentation. Queueing visualization task.")
+            self.task_manager.queue_task(
+                create_visual_from_labels,
+                labels,
+                left_right, # Pass the labels array to the worker
+                on_result=self._visualization_created
+            )
+        else:
+            log.warning("Received None from label worker, aborting visualization.")
+
+    def _visualization_created(self, result):
+        """Handles the result from the visualization worker."""
+        if result and result['visual'] is not None:
+            log.info("Received color visualization from worker.")
+            # Notify the UI with the dictionary containing both arrays
+            self.visualization_changed.emit(result)
+        else:
+            log.warning("Visualization worker failed or returned no data.")
+
+    def ensure_segmentation_is_up_to_date(self):
+        """
+        Checks if the thresholded images have changed and runs segmentation
+        if they have. This logic now lives in the model.
+        """
+        # --- Check Left Image ---
+        if self.left_threshed is not None:
+            should_run_left = (self.left_threshed_old is None or
+                               not np.array_equal(self.left_threshed, self.left_threshed_old))
+            if should_run_left:
+                self.left_threshed_old = self.left_threshed.copy()
+                self.segment_image(self.left_threshed, "left")
+        # --- Check Right Image ---
+        if self.right_threshed is not None:
+            should_run_right = (self.right_threshed_old is None or
+                                not np.array_equal(self.right_threshed, self.right_threshed_old))
+            if should_run_right:
+                self.right_threshed_old = self.right_threshed.copy()
+                self.segment_image(self.right_threshed, "right")
+
+    def get_display_area_data(self, side: str) -> list[tuple[str, str]]:
+        """
+        Returns a list of tuples (position_label, area_string)
+        with the area already scaled and formatted.
+        """
+        data_store = self.area_data_left if side == 'left' else self.area_data_right
+        display_data = []
+
+        for props in data_store.values():
+            area, cx, cy, label = props
+            try:
+                scaled_area = area / (self.conversion_factor ** 2)
+                area_str = f"{scaled_area:.3f}"
+            except (ZeroDivisionError, TypeError):
+                area_str = f"{area} (px²)"  # Provide a fallback display value
+
+            display_data.append((label, area_str))
+        return display_data
+
+    def add_area_data(self, left_right: str, blob_props: list):
+        """
+        Adds blob data using an OrderedDict to enforce a FIFO size limit.
+        """
+        blob_id, area, cx, cy = blob_props
+        data_store = self.area_data_left if left_right == 'left' else self.area_data_right
+        # If the user re-clicks an existing blob, move it to the end (making it the newest)
+        if blob_id in data_store:
+            data_store.move_to_end(blob_id)
+
+        data_store[blob_id] = [area, cx, cy, ""]  # Add or update the blob data
+        # If the dictionary is now over the max size, pop the oldest item.
+        if len(data_store) > self.MAX_MARKERS:
+            # .popitem(last=False) removes the first item inserted (FIFO)
+            data_store.popitem(last=False)
+
+        if len(data_store) == self.MAX_MARKERS:  # Recalculate labels if we have a full set of 5
+            self._calculate_and_assign_labels(data_store)
+
+        self.area_data_changed.emit(left_right, dict(data_store))
+
+    def _calculate_and_assign_labels(self, data_store: dict):
+        """
+        Calculates and assigns positional labels sequentially to prevent overwrites
+        and handle "corner cases" correctly.
+        """
+        log.info(f"Calculating and assigning labels: {data_store}")
+        if len(data_store) != self.MAX_MARKERS:
+            return
+
+        # First, clear all previous labels to ensure a clean slate
+        for blob_id in data_store:
+            data_store[blob_id][3] = ""
+
+        # Create a mutable list of unlabeled blobs with their properties
+        # Format: [(blob_id, cx, cy), ...]
+        unlabeled_blobs = [
+            (blob_id, props[1], props[2]) for blob_id, props in data_store.items()
+        ]
+
+        # --- Find, label, and remove blobs one by one ---
+
+        # Find Left-most blob from all candidates
+        left_blob = min(unlabeled_blobs, key=lambda b: b[1])
+        data_store[left_blob[0]][3] = "Left"
+        unlabeled_blobs.remove(left_blob)
+
+        # Find Right-most blob from the *remaining* candidates
+        right_blob = max(unlabeled_blobs, key=lambda b: b[1])
+        data_store[right_blob[0]][3] = "Right"
+        unlabeled_blobs.remove(right_blob)
+
+        # Find Top-most blob from the *remaining* candidates
+        top_blob = min(unlabeled_blobs, key=lambda b: b[2])
+        data_store[top_blob[0]][3] = "Top"
+        unlabeled_blobs.remove(top_blob)
+
+        # Find Bottom-most blob from the *remaining* candidates
+        bottom_blob = max(unlabeled_blobs, key=lambda b: b[2])
+        data_store[bottom_blob[0]][3] = "Bottom"
+        unlabeled_blobs.remove(bottom_blob)
+
+        # The last remaining blob must be the Middle one
+        if unlabeled_blobs:
+            middle_blob_id = unlabeled_blobs[0][0]
+            data_store[middle_blob_id][3] = "Middle"
 

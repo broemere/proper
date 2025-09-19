@@ -4,7 +4,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget
-from scipy.interpolate import make_splrep, splev
+from scipy.interpolate import UnivariateSpline
 from data_pipeline import DataPipeline
 
 log = logging.getLogger(__name__)
@@ -29,7 +29,8 @@ class StiffnessTab(QWidget):
 
         # Register to receive the 'zeroed' data whenever it's updated
         # The "transformed" signal from the pipeline carries [zeroed_data, smoothed_data]
-        self.pipeline.register_observer("transformed", self._on_data_updated)
+        #self.pipeline.register_observer("transformed", self._on_data_updated)
+        self.pipeline.register_observer('thickness_data_updated', self._refresh_data)
 
     def init_ui(self):
         """Initializes the user interface of the tab."""
@@ -63,8 +64,8 @@ class StiffnessTab(QWidget):
         self.original_curve.setZValue(0)
         self.spline_curve.setZValue(1)
 
-        self.plot_widget.setLabel("left", "<b>Pressure [mmHg]</b>")
-        self.plot_widget.setLabel("bottom", "<b>Time [min]</b>")
+        self.plot_widget.setLabel("left", "<b>Stress [kPa]</b>")
+        self.plot_widget.setLabel("bottom", "<b>Stretch [-]</b>")
         layout.addWidget(self.plot_widget)
 
         # --- Interactive Controls ---
@@ -180,7 +181,7 @@ class StiffnessTab(QWidget):
         updates the transformed data curve.
         """
         # Scipy's make_splrep requires at least k+1 (i.e., 4) data points for a cubic spline
-        if self.t_data is None or self.t_data.size < 4:
+        if self.pipeline.stretch is None or self.pipeline.stretch.size < 4:
             self.spline_curve.clear()
             return
 
@@ -188,14 +189,10 @@ class StiffnessTab(QWidget):
         log.debug(f"Running spline transform with s={s_value}")
 
         try:
-            # make_splrep requires the x-data (time) to be strictly increasing
-            # This should already be true for time-series data.
-            tck = make_splrep(self.t_data, self.p_data, k=3, s=s_value)
-            p_spline = splev(self.t_data, tck)
+            spline = UnivariateSpline(self.pipeline.stretch, self.pipeline.stress, s=s_value)
 
-            t_minutes = self.t_data / 60.0
-            self.spline_curve.setData(t_minutes, p_spline)
-            self.pipeline.p_spline = p_spline
+            self.spline_curve.setData(self.pipeline.stretch, spline(self.pipeline.stretch))
+            self.pipeline.p_spline = spline
         except Exception as e:
             # Catch potential errors from the spline algorithm
             log.error(f"Error during spline calculation: {e}")
@@ -213,4 +210,72 @@ class StiffnessTab(QWidget):
         self.s_slider.blockSignals(True)
         self.s_slider.setValue(value)
         self.s_slider.blockSignals(False)
+        self.run_spline_transform()
+
+    def _refresh_data(self, lengths):
+        self.pipeline.get_stress_stretch()
+
+
+        # Handle cases with no data
+        if self.pipeline.stretch.size == 0:
+            log.warning("SplineTab received empty data array.")
+            self.original_curve.clear()
+            self.spline_curve.clear()
+            return
+
+        y_axis = self.plot_widget.getAxis('left')
+        if self.pipeline.stress.size > 1:
+            y_min = np.min(self.pipeline.stress)
+            y_max = np.max(self.pipeline.stress)
+
+            # Find the first multiple of 5 at or above the minimum value
+            start_tick = np.ceil(y_min / 5) * 5
+
+            # Generate tick values every 5 units up to the max value
+            tick_values = np.arange(start_tick, y_max, 5)
+
+            # Format for setTicks: a list containing one list of (value, label) tuples
+            major_ticks = [(tick, f"{int(tick)}") for tick in tick_values]
+            y_axis.setTicks([major_ticks])
+
+        new_max = self.pipeline.stretch.size
+        log.info(f"Setting slider/spinbox maximum to new data length: {new_max}")
+
+        tick_interval = new_max // 10
+        self.s_slider.setTickInterval(max(1, tick_interval))
+
+        # Block signals to prevent valueChanged from firing prematurely
+        self.s_slider.blockSignals(True)
+        self.s_spinbox.blockSignals(True)
+        try:
+            # Set the new maximum for both widgets
+            self.s_slider.setMaximum(new_max)
+            self.s_spinbox.setMaximum(new_max)
+            self.s_spinbox.setValue(int(round(new_max/10)))
+            self.s_slider.setValue(int(round(new_max/10)))
+            # The widgets will automatically clamp the current value if it's
+            # now out of the new [min, max] range.
+        finally:
+            # Always unblock signals, even if an error occurs
+            self.s_slider.blockSignals(False)
+            self.s_spinbox.blockSignals(False)
+
+        log.info(f"SplineTab received new data with {self.pipeline.stretch.size} points.")
+
+        self.original_curve.setData(self.pipeline.stretch, self.pipeline.stress)
+        x_data = self.pipeline.stretch
+
+        # 2. Find the minimum and maximum of your data
+        if len(x_data) > 0:
+            min_x = x_data.min()
+            max_x = x_data.max()
+
+            # 3. Calculate a small padding (e.g., 5% of the data's total width)
+            padding = (max_x - min_x) * 0.05
+
+            # 4. Set the x-range manually, leaving the y-axis to autorange
+            self.plot_widget.setXRange(min_x - padding, max_x + padding, padding=0)
+            self.plot_widget.enableAutoRange(axis='y')
+
+        # Re-run the spline calculation with the new data
         self.run_spline_transform()

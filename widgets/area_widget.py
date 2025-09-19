@@ -14,18 +14,24 @@ class AreaAnalysisWidget(QWidget):
         self.image_rect = QRect()
         self.blob_data_to_draw = {} # Will store { (cx, cy): "Label" }
 
-    def set_data(self, pixmap: QPixmap, labeled_array: np.ndarray, blob_data: dict):
-        """Sets the visual pixmap and the data array for analysis."""
+    def set_image_data(self, pixmap: QPixmap, labeled_array: np.ndarray):
+        """Sets the base visual pixmap and the data array for analysis."""
         self.display_pixmap = pixmap
         self.labeled_array = labeled_array
-        # Process the blob data for drawing
+        self.setFixedSize(self.display_pixmap.size())
+        # Call update to ensure the new base image is drawn immediately
+        self.update()
+
+    def update_markers(self, blob_data: dict):
+        """Updates only the markers and labels to be drawn on the canvas."""
         self.blob_data_to_draw.clear()
         for blob_id, props in blob_data.items():
+            # props format is [area, cx, cy, label]
             cx, cy = props[1], props[2]
             label = props[3]
             self.blob_data_to_draw[(cx, cy)] = label
-        self.setFixedSize(self.display_pixmap.size())
-        self.update()  # Trigger a repaint with the new image
+        # Trigger a repaint to show the new markers
+        self.update()
 
     def paintEvent(self, event):
         """Draws the pixmap, markers, and position labels."""
@@ -71,42 +77,6 @@ class AreaAnalysisWidget(QWidget):
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QColor("black"))
                 painter.drawPath(path)
-
-
-        #
-        # for position in self.marker_positions:
-        #     widget_pos = QPointF(self.image_rect.topLeft()) + position
-        #     painter.setPen(Qt.NoPen)
-        #     painter.setBrush(QBrush(Qt.white))
-        #     painter.drawEllipse(widget_pos, 8, 8)
-        #     painter.setBrush(QBrush(Qt.green))
-        #     painter.drawEllipse(widget_pos, 5, 5)
-
-        # # 3. If we have 5 markers, calculate and draw position labels
-        # if len(self.marker_positions) == self.MAX_MARKERS:
-        #     labels = self._calculate_marker_labels(self.marker_positions)
-        #     font = QFont("Arial", 12, QFont.Bold)
-        #
-        #     for pos_tuple, label in labels.items():
-        #         position = QPointF(pos_tuple[0], pos_tuple[1])
-        #         widget_pos = QPointF(self.image_rect.topLeft()) + position
-        #
-        #         # Use QPainterPath for a clean text outline
-        #         path = QPainterPath()
-        #         # Position the text slightly above the marker dot
-        #         text_pos = widget_pos + QPointF(-15, -15)
-        #         path.addText(text_pos, font, label)
-        #
-        #         # Draw the white outline (stroke)
-        #         pen = QPen(QColor("white"), 2, Qt.SolidLine)
-        #         painter.setPen(pen)
-        #         painter.setBrush(Qt.NoBrush)
-        #         painter.drawPath(path)
-        #
-        #         # Draw the black text (fill)
-        #         painter.setPen(Qt.NoPen)
-        #         painter.setBrush(QColor("black"))
-        #         painter.drawPath(path)
 
     def mousePressEvent(self, event):
         """Handles clicks to calculate the area of the clicked segment."""

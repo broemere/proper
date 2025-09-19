@@ -6,6 +6,8 @@ from processing.data_transform import numpy_to_qpixmap
 from widgets.adaptive_image import AutoResizeImage
 from widgets.canvas_window import CanvasWindow
 import numpy as np
+import logging
+log = logging.getLogger(__name__)
 
 
 class ThreshTab(QWidget):
@@ -15,10 +17,8 @@ class ThreshTab(QWidget):
         self.pipeline = pipeline
         self.canvas_window1 = None
         self.canvas_window2 = None
-        self._is_state_synced = False
         self.init_ui()
-        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
-        self.pipeline.register_observer("threshed", self._update_frames)
+        self.connect_signals()
 
     def init_ui(self):
         tab_layout = QVBoxLayout(self)
@@ -28,13 +28,10 @@ class ThreshTab(QWidget):
         self.frame_label1.setFrameShape(QFrame.Box)
         self.frame_label1.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)  # allow width/height to shrink/grow
         images_row.addWidget(self.frame_label1, alignment=Qt.AlignHCenter | Qt.AlignVCenter)
-        self.frame_label1.button_clicked.connect(self._on_frame1_action)
-
         self.frame_label2 = AutoResizeImage("No data", show_button=True)
         self.frame_label2.setFrameShape(QFrame.Box)
         self.frame_label2.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         images_row.addWidget(self.frame_label2, alignment=Qt.AlignHCenter | Qt.AlignVCenter)
-        self.frame_label2.button_clicked.connect(self._on_frame2_action)
         tab_layout.addLayout(images_row, stretch=1)
 
         ctrl_row = QVBoxLayout()
@@ -46,56 +43,38 @@ class ThreshTab(QWidget):
         self.t_value = QLabel("127")
         row_t.addWidget(self.t_value)
         ctrl_row.addLayout(row_t)
-
         row_d = QHBoxLayout()
-        reset_button = QPushButton("Reset")
-        reset_button.clicked.connect(self._reset_thresh)
-        row_d.addWidget(reset_button)
+        self.reset_button = QPushButton("Reset")
+        row_d.addWidget(self.reset_button)
         ctrl_row.addLayout(row_d)
-
-        auto_methods = ["Linear Clip", "Gamma Correction", "CLAHE", "Disk Opening", "Retinex"]
-        auto_layout = QHBoxLayout()
-        auto_layout.addWidget(QLabel('Auto Thresh Method:'))
-        self.cb_auto = QComboBox()
-        self.cb_auto.addItems(auto_methods)
-        self.cb_auto.setDisabled(True)
-        auto_layout.addWidget(self.cb_auto)
-        ctrl_row.addLayout(auto_layout)
-
+        # auto_methods = ["Linear Clip", "Gamma Correction", "CLAHE", "Disk Opening", "Retinex"]
+        # auto_layout = QHBoxLayout()
+        # auto_layout.addWidget(QLabel('Auto Thresh Method:'))
+        # self.cb_auto = QComboBox()
+        # self.cb_auto.addItems(auto_methods)
+        # self.cb_auto.setDisabled(True)
+        # auto_layout.addWidget(self.cb_auto)
+        # ctrl_row.addLayout(auto_layout)
         tab_layout.addLayout(ctrl_row)
 
-        self.t_slider.valueChanged.connect(lambda v: self._on_thresh_change(self.t_value, "threshold", v))
+    def connect_signals(self):
+        """Connects all pipeline signals to the appropriate slots in this tab."""
+        # --- Connections FROM UI TO PIPELINE (User Actions) ---
+        self.t_slider.valueChanged.connect(self.pipeline.set_threshold)
+        self.reset_button.clicked.connect(self.pipeline.reset_thresh)
 
-    def showEvent(self, event: QEvent):
-        """This Qt event fires every time the widget is shown."""
-        super().showEvent(event)
-        # If the widget is being shown and its UI is out of sync, update it now.
-        if self.isVisible() and not self._is_state_synced:
-            self._sync_ui_to_pipeline()
+        # --- Connections FROM PIPELINE TO UI (Data Updates) ---
+        self.pipeline.threshed_images.connect(self._update_frames)
+        self.pipeline.threshold_changed.connect(self.t_slider.setValue)
+        self.pipeline.threshold_changed.connect(lambda v: self.t_value.setText(str(v)))
 
-    @Slot()
-    def _on_state_loaded(self, _):
-        """Slot for the 'state_loaded' signal. Marks the UI as dirty."""
-        print("THRESH TAB: Received 'state_loaded' notification.")
-        self._is_state_synced = False
-        # Sync immediately if visible, otherwise, showEvent will handle it when the user clicks the tab.
-        if self.isVisible():
-            self._sync_ui_to_pipeline()
-
-    def _sync_ui_to_pipeline(self):
-        """Pulls the current state from the pipeline and updates all UI controls."""
-        print("THRESH TAB: Synchronizing entire UI to pipeline state.")
-        self.t_slider.blockSignals(True)
-        try:
-            self.t_value.setText(str(getattr(self.pipeline, 'threshold', 127)))
-            self.t_slider.setValue(getattr(self.pipeline, 'threshold', 127))
-            self._is_state_synced = True
-        finally:
-            self.t_slider.blockSignals(False)
+        # --- Local UI Connections (No Data Logic) ---
+        self.frame_label1.button_clicked.connect(self._on_frame1_action)
+        self.frame_label2.button_clicked.connect(self._on_frame2_action)
 
     def _on_frame1_action(self):
         """Launches the drawing window for the first frame."""
-        print("Draw button on Frame 1 clicked.")
+        log.info("Draw button on Frame 1 clicked.")
         background_pixmap = self.frame_label1.pixmap()
         if background_pixmap:
             # Create and show the new window, passing the current image
@@ -103,42 +82,18 @@ class ThreshTab(QWidget):
             self.canvas_window1.drawing_completed.connect(self._on_drawing1_completed)
             self.canvas_window1.show()
         else:
-            print("Frame 1 has no image data to draw on.")
+            log.warning("Frame 1 has no image data to draw on.")
 
     def _on_frame2_action(self):
         """Launches the drawing window for the second frame."""
-        print("Draw button on Frame 2 clicked.")
+        log.info("Draw button on Frame 2 clicked.")
         background_pixmap = self.frame_label2.pixmap()
         if background_pixmap:
             self.canvas_window2 = CanvasWindow(background_pixmap)
             self.canvas_window2.drawing_completed.connect(self._on_drawing2_completed)
             self.canvas_window2.show()
         else:
-            print("Frame 2 has no image data to draw on.")
-
-    def _on_drawing1_completed(self, image_array: np.ndarray):
-        """Receives the final drawing from the canvas window for frame 1."""
-        print("Drawing for frame 1 completed. Updating pipeline.")
-        if self.pipeline.left_thresh_blobs is not None:
-            mask = (image_array != 127)
-            self.pipeline.left_thresh_blobs[mask] = image_array[mask]
-        else:
-            self.pipeline.left_thresh_blobs = image_array.astype(np.uint8)
-        self.pipeline.apply_thresh()
-        self.pipeline.left_threshed_old = self.pipeline.left_threshed.copy()
-        self.pipeline.segment_image(self.pipeline.left_threshed, "left")
-
-    def _on_drawing2_completed(self, image_array: np.ndarray):
-        """Receives the final drawing from the canvas window for frame 2."""
-        print("Drawing for frame 2 completed. Updating pipeline.")
-        if self.pipeline.right_thresh_blobs is not None:
-            mask = (image_array != 127)
-            self.pipeline.right_thresh_blobs[mask] = image_array[mask]
-        else:
-            self.pipeline.right_thresh_blobs = image_array.astype(np.uint8)
-        self.pipeline.apply_thresh()
-        self.pipeline.right_threshed_old = self.pipeline.right_threshed.copy()
-        self.pipeline.segment_image(self.pipeline.right_threshed, "right")
+            log.warning("Frame 2 has no image data to draw on.")
 
     def _update_frames(self, frames):
         """
@@ -154,15 +109,10 @@ class ThreshTab(QWidget):
             self.frame_label2.image_label.clear()
             self.frame_label2._pixmap = None
 
-    def _on_thresh_change(self, value_label: QLabel, attr: str, value: int):
-        # show new slider value
-        value_label.setText(str(value))
-        # persist to pipeline
-        setattr(self.pipeline, attr, value)
-        self.pipeline.apply_thresh()
+    def _on_drawing1_completed(self, image_array: np.ndarray):
+        """Receives the drawing and tells the pipeline to update its data."""
+        self.pipeline.update_thresh_blobs("left", image_array)
 
-    def _reset_thresh(self):
-        self.t_slider.setValue(127)
-        self.pipeline.left_thresh_blobs = None
-        self.pipeline.right_thresh_blobs = None
-        self.pipeline.apply_thresh()
+    def _on_drawing2_completed(self, image_array: np.ndarray):
+        """Receives the drawing and tells the pipeline to update its data."""
+        self.pipeline.update_thresh_blobs("right", image_array)

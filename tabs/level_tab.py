@@ -15,8 +15,7 @@ class LevelTab(QWidget):
     def __init__(self, pipeline: DataPipeline, parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
-        # Store references to the canvas windows to prevent them from being garbage collected
-        self.canvas_window1 = None
+        self.canvas_window1 = None  # Store references to the canvas windows to prevent garbage collecting
         self.canvas_window2 = None
         self.init_ui()
         self.connect_signals()
