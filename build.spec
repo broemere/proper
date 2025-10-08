@@ -7,12 +7,12 @@ app_version = os.environ.get('APP_VERSION', '0.0.0')
 app_name = f'proper_v{app_version}'
 
 # --- Platform-specific icons ---
-# if sys.platform == 'darwin':  # macOS
-#     icon_file = os.path.join('resources', 'app.icns')
-# else:  # Windows
-#     icon_file = os.path.join('resources', 'app.ico')
+if sys.platform == 'darwin':  # macOS
+    icon_file = os.path.join('resources', 'app.icns')
+else:  # Windows
+    icon_file = os.path.join('resources', 'app.ico')
 
-#platform_datas = [(icon_file, 'icons')]
+platform_datas = [(icon_file, 'icons')]
 
 # --- PyInstaller Analysis ---
 # This is where you define what gets included in your application.
@@ -48,7 +48,7 @@ if sys.platform == 'darwin':
         strip=False,
         upx=True,
         console=False,
-        #icon=icon_file,
+        icon=icon_file,
     )
     coll = COLLECT(
         exe,
@@ -78,5 +78,5 @@ else:
         strip=False,
         upx=True,
         console=True,
-        #icon=icon_file,
+        icon=icon_file,
     )

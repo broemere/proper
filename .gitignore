@@ -8,5 +8,6 @@ __pycache__/
 proper.log
 resources/*
 !resources/app.ico
+!resources/app.icns
 !resources/zoom.png
 !resources/scale.png

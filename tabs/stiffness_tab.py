@@ -145,15 +145,15 @@ class StiffnessTab(QWidget):
     def _refresh_data(self):
         self.pending_user_error = None
         if self.pipeline.conversion_factor == 0:
-            self.pending_user_error = ("Missing conversion factor",
+            self.pending_user_error = ("Issue: Missing conversion factor.",
                            "Go to the Scale tab and ensure the conversion factor is set.")
             return
         if len(self.pipeline.area_data_left)+len(self.pipeline.area_data_right) < 10:
-            self.pending_user_error = ("Area analysis incomplete",
+            self.pending_user_error = ("Issue: Area analysis incomplete.",
                            "Go to the Area tab and ensure all 5 blobs have been selected for each frame.")
             return
         if len(self.pipeline.thickness_data) == 0:
-            self.pending_user_error = ("Thickness analysis incomplete",
+            self.pending_user_error = ("Issue: Thickness analysis incomplete.",
                            "Go to the Thickness tab and ensure the thickness has been measured at least once.")
             return
 
