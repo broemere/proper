@@ -1,5 +1,5 @@
 from PySide6.QtCore import QObject, Signal
-from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy
+from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
 from collections import OrderedDict
 import numpy as np
@@ -9,6 +9,7 @@ import os
 from config import APP_VERSION
 from pathlib import Path
 from scipy.interpolate import make_splrep, sproot
+from widgets.error_bus import user_error
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,10 @@ class DataPipeline(QObject):
     # Area
     visualization_changed = Signal(dict)
     area_data_changed = Signal(str, object)
+
+    # Export
+    n_ellipses_changed = Signal(int)
+    results_updated = Signal(dict)
 
 
     def __init__(self, parent=None):
@@ -102,6 +107,9 @@ class DataPipeline(QObject):
         # AREA TAB
         self.left_threshed_old: np.ndarray | None = None
         self.right_threshed_old: np.ndarray | None = None
+
+        # EXPORT TAB
+        self.n_ellipses = 0
 
 
     def register_observer(self, key: str, callback):
@@ -341,7 +349,7 @@ class DataPipeline(QObject):
 
     def on_author_changed(self, new_author):
         self.author = new_author
-        print(self.author)
+        log.info(f"User: {self.author}")
 
     def set_thickness_data(self, lengths: list[float]):
         """
@@ -352,26 +360,6 @@ class DataPipeline(QObject):
         log.info(f"Pipeline thickness data updated. {len(lengths)} lines.")
         # Notify any observers (like ThicknessTab) that the state has changed.
         self.notify_observers('thickness_data_updated', lengths)
-
-    def n_closest_numbers(self, nums, n):
-        if n > len(nums):
-            raise ValueError("n cannot be larger than the list length")
-
-        # Step 1: sort the list
-        nums = sorted(nums)
-
-        min_range = float('inf')
-        best_group = []
-
-        # Step 2: slide a window of size n
-        for i in range(len(nums) - n + 1):
-            window = nums[i:i + n]
-            spread = window[-1] - window[0]  # max - min in the window
-            if spread < min_range:
-                min_range = spread
-                best_group = window
-
-        return best_group
 
     def pad_array(self, arr, target_len):
         """Pads a short array to a target length with empty strings."""
@@ -385,8 +373,24 @@ class DataPipeline(QObject):
         return padded_arr
 
     def get_stress_stretch(self):
+
+        n = len(self.area_data_left)
+        if n < 5:
+            raise UserError(
+                "Area analysis is incomplete.",
+                hint=f"You selected {n}/5 blobs in first image. Please click all 5, then retry."
+            )
+
+        n = len(self.area_data_right)
+        if n < 5:
+            raise UserError(
+                "Area analysis is incomplete.",
+                hint=f"You selected {n}/5 blobs in last image. Please click all 5, then retry."
+            )
+
+
         data = self.smoothed_data
-        t_final = np.mean(self.n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
+        t_final = np.mean(n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
         blobs_left = self.area_data_left
         blobs_right = self.area_data_right
 
@@ -401,7 +405,7 @@ class DataPipeline(QObject):
             else:
                 areas_left.append(area / (self.conversion_factor ** 2))
 
-        area_left = np.mean(self.n_closest_numbers(areas_left, self.n_ellipses))
+        area_left = np.mean(n_closest_numbers(areas_left, self.n_ellipses))
         rb_left = (area_left/(np.pi*ra_left))
 
         for props in blobs_right.values():
@@ -412,7 +416,7 @@ class DataPipeline(QObject):
             else:
                 areas_right.append(area / (self.conversion_factor ** 2))
 
-        area_right = np.mean(self.n_closest_numbers(areas_right, self.n_ellipses))
+        area_right = np.mean(n_closest_numbers(areas_right, self.n_ellipses))
         rb_right = (area_right/(np.pi*ra_right))
 
         v_ext_left = (4 / 3) * np.pi * (ra_left * ra_left * rb_left)
@@ -445,7 +449,7 @@ class DataPipeline(QObject):
         print("Indices:", self.left_index, self.right_index)
 
         data = self.smoothed_data
-        t_final = np.mean(self.n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
+        t_final = np.mean(n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
         blobs_left = self.area_data_left
         blobs_right = self.area_data_right
         #print(t_final)
@@ -463,7 +467,7 @@ class DataPipeline(QObject):
             else:
                 areas_left.append(area / (self.conversion_factor ** 2))
 
-        area_left = np.mean(self.n_closest_numbers(areas_left, self.n_ellipses))
+        area_left = np.mean(n_closest_numbers(areas_left, self.n_ellipses))
         rb_left = (area_left/(np.pi*ra_left))
 
         for props in blobs_right.values():
@@ -474,7 +478,7 @@ class DataPipeline(QObject):
             else:
                 areas_right.append(area / (self.conversion_factor ** 2))
 
-        area_right = np.mean(self.n_closest_numbers(areas_right, self.n_ellipses))
+        area_right = np.mean(n_closest_numbers(areas_right, self.n_ellipses))
         rb_right = (area_right/(np.pi*ra_right))
 
         v_ext_left = (4 / 3) * np.pi * (ra_left * ra_left * rb_left)
@@ -628,7 +632,7 @@ class DataPipeline(QObject):
             }
         }
 
-        self.notify_observers("results_updated", results_output)
+        self.results_updated.emit(results_output)
 
 
     ### SCALE TAB
@@ -1098,4 +1102,13 @@ class DataPipeline(QObject):
         if unlabeled_blobs:
             middle_blob_id = unlabeled_blobs[0][0]
             data_store[middle_blob_id][3] = "Middle"
+
+
+    ### EXPORT TAB
+
+    def set_n_ellipses(self, value: int):
+        if self.n_ellipses != value:
+            self.n_ellipses = value
+            log.info(f"Pipeline n_ellipses set to: {self.n_ellipses}")
+            self.n_ellipses_changed.emit(self.n_ellipses)
 

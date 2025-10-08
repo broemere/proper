@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget
 from scipy.interpolate import UnivariateSpline
 from data_pipeline import DataPipeline
+from widgets.error_bus import user_error
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,10 @@ class StiffnessTab(QWidget):
         self.t_data = None  # To store time data (in seconds)
         self.p_data = None  # To store pressure data
 
+        self.pending_user_error = None
+
         self.init_ui()
+        self.connect_signals()
 
         # Register to receive the 'zeroed' data whenever it's updated
         # The "transformed" signal from the pipeline carries [zeroed_data, smoothed_data]
@@ -94,6 +98,25 @@ class StiffnessTab(QWidget):
         # Connect signals for synchronization and updates
         self.s_slider.valueChanged.connect(self._slider_value_changed)
         self.s_spinbox.valueChanged.connect(self._spinbox_value_changed)
+
+    def connect_signals(self):
+
+        # --- Connections FROM PIPELINE TO UI (Data Updates) ---
+        self.pipeline.area_data_changed.connect(self._refresh_data) # Necessary if the user missed one of the blobs and goes back
+        # Not the best method for this though
+
+    def showEvent(self, event):
+        """
+        Overrides the QWidget's showEvent. Called when the widget becomes visible.
+        """
+        # First, let the parent class do its thing
+        super().showEvent(event)
+
+        # Now, check if we have a pending error to display
+        if self.pending_user_error:
+            user_error(self.pending_user_error[0], self.pending_user_error[1])
+            self.original_curve.clear()
+            self.spline_curve.clear()
 
     def _create_plot_widget(self, title: str) -> pg.PlotWidget:
         """Helper to create a plot widget consistent with the app's theme."""
@@ -181,7 +204,7 @@ class StiffnessTab(QWidget):
         updates the transformed data curve.
         """
         # Scipy's make_splrep requires at least k+1 (i.e., 4) data points for a cubic spline
-        if self.pipeline.stretch is None or self.pipeline.stretch.size < 4:
+        if getattr(self.pipeline, "stretch", None) is None or self.pipeline.stretch.size < 4:
             self.spline_curve.clear()
             return
 
@@ -213,6 +236,17 @@ class StiffnessTab(QWidget):
         self.run_spline_transform()
 
     def _refresh_data(self, lengths):
+
+        self.pending_user_error = None
+
+        if len(self.pipeline.thickness_data) == 0:
+            self.pending_user_error = ("Thickness analysis incomplete",
+                           "Go to the Thickness tab and ensure the thickness has been measured at least once.")
+            return
+        if len(self.pipeline.area_data_left)+len(self.pipeline.area_data_right) < 10:
+            self.pending_user_error = ("Area analysis incomplete",
+                           "Go to the Area tab and ensure all 5 blobs have been selected for each frame.")
+            return
         self.pipeline.get_stress_stretch()
 
 

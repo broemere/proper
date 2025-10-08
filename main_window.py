@@ -1,11 +1,12 @@
 import logging
-from PySide6.QtCore import QSettings, Slot, Qt, QTimer
+from PySide6.QtCore import QSettings, Slot, Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog, QLineEdit, QHBoxLayout
 from config import APP_NAME, SAVE_FILETYPE
 from processing.task_manager import TaskManager
 from widgets.status_bar import StatusBarWidget
 from widgets.analysis_session_widget import AnalysisSessionWidget
+from widgets.error_bus import bus
 import json
 import gzip
 import os
@@ -100,6 +101,10 @@ class MainWindow(QMainWindow):
 
         # Connect the cancel button from the status bar to the task manager
         self.status_bar.cancel_clicked.connect(self.task_manager.cancel_batch)
+
+        # Connect error bus to dialog
+        bus.user_error_details.connect(lambda exc, tb: self.show_error_dialog((exc, tb)))
+
 
     @Slot()
     def add_new_super_tab(self, unfocus=False):
@@ -366,11 +371,10 @@ class MainWindow(QMainWindow):
         exc, tb_str = err_tb
         log.error(f"Displaying error dialog for: {exc}\nTraceback: {tb_str}")
         msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setWindowTitle("An Error Occurred")
-        msg_box.setText(f"A background task has failed.\n\n<b>Error:</b> {exc}")
-        msg_box.setInformativeText(
-            "Please check the 'proper.log' file for detailed technical information."
-        )
+        msg_box.setIcon(QMessageBox.Warning if getattr(exc, "hint", None) else QMessageBox.Critical)
+        title = "Action Required" if getattr(exc, "hint", None) else "An Error Occurred"
+        msg_box.setWindowTitle(title)
+        msg_box.setText(str(exc))
+        msg_box.setInformativeText(getattr(exc, "hint", "Please check 'proper.log' for details."))
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec()

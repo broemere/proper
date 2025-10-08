@@ -134,9 +134,9 @@ class AnalysisSessionWidget(QWidget):
         self.analysis_tabs.addTab(self.area_tab_left, "⭕ Area")
         self.thickness_tab = ThicknessTab(self.pipeline)
         self.analysis_tabs.addTab(self.thickness_tab, "✒️ Thickness")
-        self.stiffness_tab = StiffnessTab(self.pipeline) # Assuming this is correct from original
+        self.stiffness_tab = StiffnessTab(self.pipeline)
         self.analysis_tabs.addTab(self.stiffness_tab, "〰️ Stiffness")
-        self.export_tab = ExportTab(self.pipeline, self.settings) # Assuming this is correct from original
+        self.export_tab = ExportTab(self.pipeline)
         self.analysis_tabs.addTab(self.export_tab, "📦 Export")
 
         self.analysis_tabs.setCurrentIndex(0)
@@ -149,6 +149,7 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.scale_is_manual_changed.connect(self._save_scale_is_manual)
         self.pipeline.manual_conversion_factor_changed.connect(self._save_manual_conversion_factor)
         self.pipeline.final_pressure_changed.connect(self._save_final_pressure)
+        self.pipeline.n_ellipses_changed.connect(self._save_n_ellipses)
 
     def _load_settings_into_pipeline(self):
         """Reads values from QSettings and populates the pipeline."""
@@ -163,10 +164,8 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.set_scale_is_manual(is_manual)
         final_pressure = self.settings.value("frame/final_pressure", defaultValue=25.0, type=float)
         self.pipeline.set_final_pressure(final_pressure)
-
-        # ... load other settings for other tabs here ...
-        # export_path = self.settings.value("export/path", ...)
-        # self.pipeline.set_export_path(export_path)
+        n_ellipses_index = self.settings.value("export/n_ellipses", defaultValue=3, type=int)
+        self.pipeline.set_n_ellipses(n_ellipses_index + 1)
 
     @Slot(str)
     def on_file_selected(self, path: str):
@@ -234,3 +233,9 @@ class AnalysisSessionWidget(QWidget):
     def _save_final_pressure(self, pressure: float):
         """Saves the final_pressure to settings."""
         self.settings.setValue("frame/final_pressure", pressure)
+
+    @Slot(int)
+    def _save_n_ellipses(self, n_ellipses: int):
+        """Saves the number of ellipses (as an index) to settings."""
+        # Convert the value (1-4) back to an index (0-3) for saving
+        self.settings.setValue("export/n_ellipses", n_ellipses - 1)

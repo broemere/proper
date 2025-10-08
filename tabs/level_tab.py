@@ -1,8 +1,7 @@
 import numpy as np
 from data_pipeline import DataPipeline
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QSizePolicy, QSlider, \
-    QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSizePolicy, QSlider, QFrame
 from processing.data_transform import numpy_to_qpixmap
 from widgets.adaptive_image import AutoResizeImage
 from widgets.canvas_window import CanvasWindow

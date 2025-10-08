@@ -384,3 +384,45 @@ def restore_numpy(obj):
 
     # 4) Leave everything else alone
     return obj
+
+def format_value(value: float) -> str:
+    """
+    Formats a number with a variable number of decimal places based on its magnitude.
+    - 3 decimal places for numbers < 1
+    - 2 decimal places for numbers < 10
+    - 1 decimal place for numbers >= 10
+    """
+    # Gracefully handle cases where the value might not be a number
+    if not isinstance(value, (int, float)):
+        return str(value)
+    if value == int(value):
+        return f"{int(value)}" # Format as a simple integer
+
+    num_abs = abs(value)
+    if num_abs < 1:
+        precision = 3
+    elif num_abs < 10:
+        precision = 2
+    else:  # For numbers 10 and greater
+        precision = 1
+    return f"{value:.{precision}f}"
+
+def n_closest_numbers(nums, n):
+    if n > len(nums):
+        return nums
+
+    # Step 1: sort the list
+    nums = sorted(nums)
+
+    min_range = float('inf')
+    best_group = []
+
+    # Step 2: slide a window of size n
+    for i in range(len(nums) - n + 1):
+        window = nums[i:i + n]
+        spread = window[-1] - window[0]  # max - min in the window
+        if spread < min_range:
+            min_range = spread
+            best_group = window
+
+    return best_group

@@ -1,8 +1,5 @@
-from PySide6.QtCore import Qt, Signal, QEvent, Slot
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy, QScrollArea,
-    QTabWidget, QTableWidget, QHeaderView, QTableWidgetItem
-)
+from PySide6.QtCore import Qt, Slot
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QTabWidget, QTableWidget, QTableWidgetItem
 from data_pipeline import DataPipeline
 from widgets.area_widget import AreaAnalysisWidget
 from processing.data_transform import numpy_to_qpixmap

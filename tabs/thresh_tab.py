@@ -1,7 +1,6 @@
 from data_pipeline import DataPipeline
-from PySide6.QtCore import Qt, Slot, QEvent
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSizePolicy, QSlider, QFrame, \
-    QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QSlider, QFrame, QPushButton
 from processing.data_transform import numpy_to_qpixmap
 from widgets.adaptive_image import AutoResizeImage
 from widgets.canvas_window import CanvasWindow
