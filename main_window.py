@@ -1,7 +1,7 @@
 import logging
-from PySide6.QtCore import QSettings, Slot, Qt, QTimer, QObject, Signal
+from PySide6.QtCore import QSettings, Slot, Qt, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog, QLineEdit, QHBoxLayout
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog
 from config import APP_NAME, SAVE_FILETYPE
 from processing.task_manager import TaskManager
 from widgets.status_bar import StatusBarWidget

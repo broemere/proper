@@ -6,3 +6,7 @@ dist/
 __pycache__/
 *.py[cod]
 proper.log
+resources/*
+!resources/app.ico
+!resources/zoom.png
+!resources/scale.png

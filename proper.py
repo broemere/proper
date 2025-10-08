@@ -2,9 +2,10 @@ import sys
 import logging
 from main_window import MainWindow
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPalette, QPixmap
+from PySide6.QtGui import QPalette, QPixmap, QIcon
 from PySide6.QtWidgets import QApplication, QSplashScreen
 from config import APP_NAME, APP_VERSION, ORG
+from processing.resource_loader import resource_path
 
 
 if __name__ == '__main__':
@@ -22,7 +23,8 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setOrganizationName(ORG)
     app.setApplicationName(APP_NAME)
-    # app.setWindowIcon(QIcon(icon_path)) # Set program Icon
+    icon_path = resource_path("resources/app.ico")
+    app.setWindowIcon(QIcon(icon_path)) # Set program Icon
     app.setStyle('Fusion')
 
     # Splash screen
