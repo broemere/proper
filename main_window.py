@@ -369,12 +369,16 @@ class MainWindow(QMainWindow):
     def show_error_dialog(self, err_tb):
         """Displays a modal dialog for critical errors from background tasks."""
         exc, tb_str = err_tb
-        log.error(f"Displaying error dialog for: {exc}\nTraceback: {tb_str}")
+        is_user_warning = hasattr(exc, "hint")
+        if is_user_warning:
+            log.warning(f"Displaying user warning: {exc}")
+        else:
+            log.error(f"Displaying critical error: {exc}\nTraceback: {tb_str}")
         msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Warning if getattr(exc, "hint", None) else QMessageBox.Critical)
-        title = "Action Required" if getattr(exc, "hint", None) else "An Error Occurred"
+        msg_box.setIcon(QMessageBox.Warning if is_user_warning else QMessageBox.Critical)
+        title = "Action Required" if is_user_warning else "An Error Occurred"
         msg_box.setWindowTitle(title)
         msg_box.setText(str(exc))
-        msg_box.setInformativeText(getattr(exc, "hint", "Please check 'proper.log' for details."))
+        msg_box.setInformativeText(getattr(exc, "hint", f"Please check '{APP_NAME.lower()}.log' for details."))
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec()

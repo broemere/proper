@@ -20,12 +20,9 @@ class ThicknessTab(QWidget):
         self._has_been_shown = False  # A flag to prevent unnecessary reloads
         self.stored_lines = []
         self.init_ui()
+        self.connect_signals()
 
         self.setMouseTracking(True)
-
-        self.pipeline.register_observer("right_image", self._show_thickness_image)
-        self.pipeline.register_observer("conversion_factor", self.refresh_table)
-        self.pipeline.register_observer("thickness_data_updated", self.refresh_table)
 
 
     def showEvent(self, event):
@@ -93,6 +90,12 @@ class ThicknessTab(QWidget):
         main_layout.addWidget(self.scroll_area, stretch=0)
 
         self._update_table_size()  # Set initial size
+
+    def connect_signals(self):
+        self.pipeline.right_image_changed.connect(self._show_thickness_image)
+        self.pipeline.conversion_factor_changed.connect(self.refresh_table)
+        self.pipeline.thickness_changed.connect(self.refresh_table)
+
 
     def _update_table_size(self):
         """

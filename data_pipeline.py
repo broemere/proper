@@ -8,7 +8,7 @@ import json
 import os
 from config import APP_VERSION
 from pathlib import Path
-from scipy.interpolate import make_splrep, sproot
+from scipy.interpolate import UnivariateSpline
 from widgets.error_bus import user_error
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,9 @@ class DataPipeline(QObject):
     visualization_changed = Signal(dict)
     area_data_changed = Signal(str, object)
 
+    # Thickness
+    thickness_changed = Signal(list)
+
     # Export
     n_ellipses_changed = Signal(int)
     results_updated = Signal(dict)
@@ -75,6 +78,7 @@ class DataPipeline(QObject):
         self._observers = {}
         self.task_manager = None
         self.VERSION = APP_VERSION
+        self.data_version = 0
 
         self.left_image: np.ndarray | None = None
         self.right_image: np.ndarray | None = None
@@ -141,6 +145,7 @@ class DataPipeline(QObject):
             self.zeroed_data = zero_data(self.trimmed_data, self.zeroing_method, self.zeroing_window + 1)
             # 3. Apply smoothing on the trimmed data.
             self.smoothed_data = smooth_data(self.zeroed_data, self.smoothing_method, self.smoothing_window + 1)
+            self.data_version += 1
             self.notify_observers('transformed', [self.zeroed_data, self.smoothed_data])
             print("Points plotted:", len(self.smoothed_data["p"]))
 
@@ -358,8 +363,8 @@ class DataPipeline(QObject):
         """
         self.thickness_data = lengths
         log.info(f"Pipeline thickness data updated. {len(lengths)} lines.")
-        # Notify any observers (like ThicknessTab) that the state has changed.
-        self.notify_observers('thickness_data_updated', lengths)
+        self.data_version += 1
+        self.thickness_changed.emit(lengths)
 
     def pad_array(self, arr, target_len):
         """Pads a short array to a target length with empty strings."""
@@ -683,7 +688,7 @@ class DataPipeline(QObject):
         if self.conversion_factor != factor or force_update:
             self.conversion_factor = factor
             log.info(f"Conversion factor updated: {self.conversion_factor}")
-            self.notify_observers('conversion_factor', factor)
+            self.data_version += 1
             self.conversion_factor_changed.emit(self.conversion_factor)
 
 
@@ -707,6 +712,7 @@ class DataPipeline(QObject):
             self.task_manager.queue_task(
                 frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
             )
+        self.data_version += 1
         self.left_keypoint_changed.emit(self.right_index)
 
     def set_right_keypoint(self, index: int, load_frame: bool = True):
@@ -720,6 +726,7 @@ class DataPipeline(QObject):
             self.task_manager.queue_task(
                 frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
             )
+        self.data_version += 1
         self.right_keypoint_changed.emit(self.right_index)
 
     def left_frame_loaded(self, result: dict):
@@ -1055,6 +1062,7 @@ class DataPipeline(QObject):
         if len(data_store) == self.MAX_MARKERS:  # Recalculate labels if we have a full set of 5
             self._calculate_and_assign_labels(data_store)
 
+        self.data_version += 1
         self.area_data_changed.emit(left_right, dict(data_store))
 
     def _calculate_and_assign_labels(self, data_store: dict):
@@ -1104,11 +1112,40 @@ class DataPipeline(QObject):
             data_store[middle_blob_id][3] = "Middle"
 
 
+    ### STIFFNESS TAB
+
+    def calculate_spline(self, s_value: int) -> np.ndarray | None:
+        """
+        Calculates a smoothed spline for the stress-stretch data.
+
+        Args:
+            s_value: The smoothing factor 's' for the UnivariateSpline.
+
+        Returns:
+            A NumPy array of the smoothed y-values (stress) on success,
+            or None if the calculation fails (e.g., insufficient data).
+        """
+        if getattr(self, "stretch", None) is None or self.stretch.size < 4:
+            log.warning("Spline calculation skipped: not enough data points.")
+            self.p_spline = None # Ensure old spline is cleared
+            return None
+
+        try:
+            spline = UnivariateSpline(self.stretch, self.stress, s=s_value)
+            self.p_spline = spline  # Store the spline object
+            return spline(self.stretch) # Return the calculated Y-values
+
+        except Exception as e:
+            log.error(f"Error during spline calculation: {e}")
+            self.p_spline = None # Ensure old spline is cleared
+            return None
+
     ### EXPORT TAB
 
     def set_n_ellipses(self, value: int):
         if self.n_ellipses != value:
             self.n_ellipses = value
             log.info(f"Pipeline n_ellipses set to: {self.n_ellipses}")
+            self.data_version += 1
             self.n_ellipses_changed.emit(self.n_ellipses)
 
