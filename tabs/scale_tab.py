@@ -106,6 +106,7 @@ class ScaleTab(QWidget):
         self.refresh_btn.clicked.connect(self._reload_base_image)
         self.undo_btn.clicked.connect(self.line_canvas.undo_last_line)
         self.line_canvas.mode_changed.connect(self._on_canvas_mode_changed)
+        self.mode_group.buttonClicked.connect(self._on_tool_button_clicked)
 
     # --- UI Synchronization and State Management ---
 
@@ -141,3 +142,10 @@ class ScaleTab(QWidget):
     def _on_manual_factor_finished(self):
         # Get the final value from the spin box and update the pipeline
         self.pipeline.set_manual_conversion_factor(self.manual_conversion_spin.value())
+
+    def _on_tool_button_clicked(self, button: QPushButton):
+        """Sets the canvas mode based on which tool button was clicked."""
+        if button == self.zoom_btn:
+            self.line_canvas.set_mode('zoom')
+        elif button == self.line_btn:
+            self.line_canvas.set_mode('line')

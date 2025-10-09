@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
         """Creates a new AnalysisSessionWidget and adds it as a new 'supertab'."""
         session_widget = AnalysisSessionWidget(self.task_manager, self.settings)
         session_widget.tab_name_requested.connect(self.on_tab_name_change_requested)
+        session_widget.help_requested.connect(self.show_info_dialog)
 
         tab_name = f"Analysis {self.super_tabs.count() + 1}"
         index = self.super_tabs.addTab(session_widget, tab_name)
@@ -380,5 +381,17 @@ class MainWindow(QMainWindow):
         msg_box.setWindowTitle(title)
         msg_box.setText(str(exc))
         msg_box.setInformativeText(getattr(exc, "hint", f"Please check '{APP_NAME.lower()}.log' for details."))
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec()
+
+    def show_info_dialog(self, title: str, message: str):
+        """Displays a modal informational dialog with a standard icon and rich text."""
+        log.info(f"Displaying info dialog: {title}")
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Information)
+        msg_box.setWindowTitle(title)
+        msg_box.setTextFormat(Qt.RichText)  # Tell the box to parse HTML
+        msg_box.setText(f"<b>{title}</b>")
+        msg_box.setInformativeText(message)
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec()

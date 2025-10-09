@@ -1,16 +1,17 @@
 import logging
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget, QPushButton, QStyle
 from data_pipeline import DataPipeline
 from widgets.error_bus import user_error
+from widgets.user_messages import HELP_CONTENT
 
 log = logging.getLogger(__name__)
 
 
-class StiffnessTab(QWidget):
+class SmoothingTab(QWidget):
     """
     A widget tab for visualizing the effect of spline smoothing on data.
 
@@ -19,11 +20,11 @@ class StiffnessTab(QWidget):
     adjustment of the spline's smoothing factor 's'.
     """
 
+    help_requested = Signal(str, str)
+
     def __init__(self, pipeline: DataPipeline, parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
-        self.t_data = None  # To store time data (in seconds)
-        self.p_data = None  # To store pressure data
         self.pending_user_error = None
         self.last_plotted_version = -1
 
@@ -36,12 +37,10 @@ class StiffnessTab(QWidget):
         layout = QVBoxLayout(self)
         self.plot_widget = self._create_plot_widget("<b>Spline Smoothing Transformation</b>")
         self.plot_widget.addLegend()
-
         # --- Curve Styling ---
         original_color = self.palette().color(QPalette.WindowText)
         original_color.setAlpha(100)
         spline_color = QColor("#E74C3C")  # reddish-orange
-
         # --- Plot Curves ---
         self.original_curve = self.plot_widget.plot(
             [],
@@ -50,12 +49,21 @@ class StiffnessTab(QWidget):
             name="Original Smoothed",
         )
         self.spline_curve = self.plot_widget.plot([], [], pen=pg.mkPen(spline_color, width=2.5), name="Spline")
+        self.interest_points = self.plot_widget.plot(
+            [], [],
+            pen=None,  # No connecting line
+            symbol='o',  # Use circles as markers
+            symbolBrush=None,  # Fill color of the circles
+            symbolPen='k',  # Outline color of the circles (black)
+            symbolSize=7,
+            name="Pressures of Interest"
+        )
         self.original_curve.setZValue(0)
         self.spline_curve.setZValue(1)  # spline curve is always drawn on top of the original
+        self.interest_points.setZValue(2)  # Ensure points are drawn on top
         self.plot_widget.setLabel("left", "<b>Stress [kPa]</b>")
         self.plot_widget.setLabel("bottom", "<b>Stretch [-]</b>")
         layout.addWidget(self.plot_widget)
-
         # --- Interactive Controls ---
         controls_layout = QHBoxLayout()
         self.refresh_btn = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload), "")
@@ -78,21 +86,22 @@ class StiffnessTab(QWidget):
         self.s_spinbox.setValue(10000)
         self.s_spinbox.setFixedWidth(80)  # Accommodate larger numbers
         controls_layout.addWidget(self.s_spinbox)
+        self.help_btn = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxQuestion), "")
+        self.help_btn.setToolTip("Smoothing tab info")
+        title, msg = HELP_CONTENT["smoothing"]
+        self.help_btn.clicked.connect(lambda: self.help_requested.emit(title, msg))
+        controls_layout.addWidget(self.help_btn)
         layout.addLayout(controls_layout)
 
     def connect_signals(self):
-        # Connect signals for synchronization and updates
         self.s_slider.valueChanged.connect(self._slider_value_changed)
         self.s_spinbox.valueChanged.connect(self._spinbox_value_changed)
 
     def showEvent(self, event):
-        """Called when the widget becomes visible."""
         super().showEvent(event)
-
         if self.last_plotted_version != self.pipeline.data_version:
             log.info("Data is stale. Refreshing StiffnessTab.")
             self._refresh_data()
-
         if self.pending_user_error:
             QTimer.singleShot(0, self._show_pending_user_error)  # Hold the error until the tab has rendered
 
@@ -100,6 +109,7 @@ class StiffnessTab(QWidget):
         user_error(self.pending_user_error[0], self.pending_user_error[1])
         self.original_curve.clear()
         self.spline_curve.clear()
+        self.interest_points.clear()
 
     def _create_plot_widget(self, title: str) -> pg.PlotWidget:
         """Helper to create a plot widget consistent with the app's theme."""
@@ -121,12 +131,19 @@ class StiffnessTab(QWidget):
     def run_spline_transform(self):
         """Performs the spline calculation using the current 's' value and updates the transformed data curve."""
         s_value = self.s_slider.value()
-        log.debug(f"Requesting spline transform with s={s_value}")
+        #log.info(f"Requesting spline transform with s={s_value}")
         spline_y_values = self.pipeline.calculate_spline(s_value)
         if spline_y_values is not None:
             self.spline_curve.setData(self.pipeline.stretch, spline_y_values)
+            points = self.pipeline.get_interest_points_on_spline()
+            if points:
+                x_coords, y_coords = points
+                self.interest_points.setData(x_coords, y_coords)
+            else:
+                self.interest_points.clear()
         else:
             self.spline_curve.clear()
+            self.interest_points.clear()
 
     def _slider_value_changed(self, value: int):
         """Synchronizes the spinbox to the slider and triggers a recalculation."""
@@ -144,17 +161,9 @@ class StiffnessTab(QWidget):
 
     def _refresh_data(self):
         self.pending_user_error = None
-        if self.pipeline.conversion_factor == 0:
-            self.pending_user_error = ("Issue: Missing conversion factor.",
-                           "Go to the Scale tab and ensure the conversion factor is set.")
-            return
-        if len(self.pipeline.area_data_left)+len(self.pipeline.area_data_right) < 10:
-            self.pending_user_error = ("Issue: Area analysis incomplete.",
-                           "Go to the Area tab and ensure all 5 blobs have been selected for each frame.")
-            return
-        if len(self.pipeline.thickness_data) == 0:
-            self.pending_user_error = ("Issue: Thickness analysis incomplete.",
-                           "Go to the Thickness tab and ensure the thickness has been measured at least once.")
+        validation_error = self.pipeline.validate_for_stress_stretch()
+        if validation_error:
+            self.pending_user_error = validation_error
             return
 
         self.pipeline.get_stress_stretch()
@@ -162,13 +171,6 @@ class StiffnessTab(QWidget):
         self.last_plotted_version = self.pipeline.data_version
 
     def _update_plot_and_controls(self):
-        # Handle cases with no data
-        if self.pipeline.stretch.size <= 1:
-            log.warning("SplineTab received empty data array.")
-            self.original_curve.clear()
-            self.spline_curve.clear()
-            return
-
         self._configure_y_axis()
         self._configure_controls()
         self._configure_original_plot()

@@ -1,3 +1,5 @@
+from logging import ERROR
+
 from PySide6.QtCore import QObject, Signal
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
@@ -10,6 +12,7 @@ from config import APP_VERSION
 from pathlib import Path
 from scipy.interpolate import UnivariateSpline
 from widgets.error_bus import user_error
+from widgets.user_messages import ERROR_CONTENT
 
 log = logging.getLogger(__name__)
 
@@ -370,12 +373,34 @@ class DataPipeline(QObject):
         """Pads a short array to a target length with empty strings."""
         # Create a new array of the target length, filled with empty strings
         # and using the 'object' dtype to allow for mixed types.
-        padded_arr = np.full(target_len, np.nan, dtype=float)
+        padded_arr = np.full(target_len, 0, dtype=float)
 
         # Copy the original data into the beginning of the new array
         padded_arr[:len(arr)] = arr
 
         return padded_arr
+
+    def validate_for_stress_stretch(self) -> tuple | None:
+        """
+        Checks if all prerequisite data for the stress-stretch calculation is present.
+
+        Returns:
+            A tuple (title, message) from error_descriptions if validation fails.
+            None if validation succeeds.
+        """
+        if len(self.smoothed_data["p"]) < 4:
+            return ERROR_CONTENT["empty_data_array"]
+
+        if self.conversion_factor == 0:
+            return ERROR_CONTENT["no_conversion_factor"]
+
+        if len(self.area_data_left) + len(self.area_data_right) < 10:
+            return ERROR_CONTENT["area_incomplete"]
+
+        if len(self.thickness_data) == 0:
+            return ERROR_CONTENT["thickness_incomplete"]
+
+        return None  # All checks passed
 
     def get_stress_stretch(self):
 
@@ -555,10 +580,17 @@ class DataPipeline(QObject):
         stiffnesses = {}
         for p_target in self.pressures_of_interest:
             # 3. Find the time 't' (frame index) where p(t) = p_target
-            i = np.argmin(np.abs(np.array(p_zeroed) - p_target))
-            stretch_target = stretch[i]
-            modulus = deriv_spline(stretch_target)
-            stiffnesses[str(p_target)] = {'modulus_kPa': modulus, 'stretch': stretch_target}
+            diff = np.abs(np.array(p_smoothed) - p_target)
+            i = np.argmin(diff)
+            if diff[i] < 0.25:
+                true_p = p_smoothed[i]
+                stretch_target = stretch[i]
+                stress_at_p = stress[i]
+                modulus = deriv_spline(stretch_target)
+                stiffnesses[str(p_target)] = {'true_p': true_p,
+                                              'modulus_kPa': modulus,
+                                              'stretch': stretch_target,
+                                              'stress': stress_at_p}
 
         data = np.column_stack([
             frames,
@@ -572,15 +604,17 @@ class DataPipeline(QObject):
             stretch,
             stress,
             self.pad_array(self.pressures_of_interest, len(frames)),
+            self.pad_array([stiffnesses[str(p)]["true_p"] for p in self.pressures_of_interest], len(frames)),
             self.pad_array([stiffnesses[str(p)]["modulus_kPa"] for p in self.pressures_of_interest], len(frames)),
             self.pad_array([stiffnesses[str(p)]["stretch"] for p in self.pressures_of_interest], len(frames)),
+            self.pad_array([stiffnesses[str(p)]["stress"] for p in self.pressures_of_interest], len(frames)),
         ])
 
         # Optional: replace inf with nan so Excel doesn't choke
         data = np.where(np.isfinite(data), data, np.nan)
 
         # Prepare header
-        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter(midwall),v_inner,stretch,stress,pressures of interest,stiffness(kpa),stretch"
+        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter(midwall),v_inner,stretch,stress,pressures of interest,true pressure,stiffness(kpa),stretch,stress"
 
         # Ensure parent dir exists
 
@@ -917,23 +951,38 @@ class DataPipeline(QObject):
 
     def update_thresh_blobs(self, side: str, image_array: np.ndarray):
         """Handles the logic of merging a new drawing into the existing blobs."""
+        # Update the blob data storage
         if side == "left":
             if self.left_thresh_blobs is not None:
-                mask = (image_array != 127)  # Logic is now inside the model
+                mask = (image_array != 127)
                 self.left_thresh_blobs[mask] = image_array[mask]
             else:
                 self.left_thresh_blobs = image_array.astype(np.uint8)
-            self.left_threshed_old = self.left_threshed.copy()
-            self.segment_image(self.left_threshed, "left")
         elif side == "right":
             if self.right_thresh_blobs is not None:
-                mask = (image_array != 127)  # Logic is now inside the model
+                mask = (image_array != 127)
                 self.right_thresh_blobs[mask] = image_array[mask]
             else:
                 self.right_thresh_blobs = image_array.astype(np.uint8)
+
+        # back up the current thresholded images BEFORE applying the new blobs.
+        if self.left_threshed is not None:
+            self.left_threshed_old = self.left_threshed.copy()
+        if self.right_threshed is not None:
             self.right_threshed_old = self.right_threshed.copy()
-            self.segment_image(self.right_threshed, "right")
+
         self.apply_thresh()
+        # queue the segmentation task using the FRESHLY updated image data.
+        if side == "left":
+            self.segment_image(self.left_threshed, "left")
+            if self.left_threshed is not None:
+                self.left_threshed_old = self.left_threshed.copy()
+        elif side == "right":
+            self.segment_image(self.right_threshed, "right")
+            if self.right_threshed is not None:
+                # Sync the 'old' state to what we JUST sent for processing.
+                self.right_threshed_old = self.right_threshed.copy()
+
 
     def paste_thresh_blobs(self, left_img, right_img):
         if self.left_thresh_blobs is not None:
@@ -972,7 +1021,17 @@ class DataPipeline(QObject):
 
     ### AREA TAB
 
+    def clear_area_data(self, side: str):
+        """Clears the stored blob data for the specified side."""
+        data_store = self.area_data_left if side == 'left' else self.area_data_right
+        if data_store:  # Only clear and emit if there's something to clear
+            data_store.clear()
+            log.info(f"Cleared area data for '{side}' side.")
+            # Notify the UI that the data has been cleared
+            self.area_data_changed.emit(side, {})
+
     def segment_image(self, arr, left_right):
+        self.clear_area_data(left_right)
         log.info(f"Queueing segmentation ({left_right}) task.")
         self.task_manager.queue_task(
             label_image,  # The function to run
@@ -1112,7 +1171,7 @@ class DataPipeline(QObject):
             data_store[middle_blob_id][3] = "Middle"
 
 
-    ### STIFFNESS TAB
+    ### SMOOTHING TAB
 
     def calculate_spline(self, s_value: int) -> np.ndarray | None:
         """
@@ -1139,6 +1198,43 @@ class DataPipeline(QObject):
             log.error(f"Error during spline calculation: {e}")
             self.p_spline = None # Ensure old spline is cleared
             return None
+
+    def get_interest_points_on_spline(self) -> tuple[list, list] | None:
+        """
+        Calculates the (stretch, stress) coordinates for the pressures of interest
+        using the currently stored spline.
+
+        Returns:
+            A tuple containing a list of x-coordinates and a list of y-coordinates,
+            or None if the spline or data is not available.
+        """
+        # 1. Check if we have everything we need
+        if self.p_spline is None or self.stress.size == 0:
+            return None
+
+        x_coords, y_coords = [], []
+
+        start = self.left_index - self.trim_start
+        stop = self.right_index - self.trim_start + 1
+        p_smoothed = np.array(self.smoothed_data["p"][start:stop])
+
+        # 2. Loop through the target pressures
+        for p_target in self.pressures_of_interest:
+            # Find the index of the closest pressure in the raw data
+            diff = np.abs(p_smoothed - p_target)
+            i = np.argmin(diff)
+            if diff[i] < 0.25:
+                # Use that index to find the corresponding stretch value (x-coordinate)
+                stretch_at_target = self.stretch[i]
+                x_coords.append(stretch_at_target)
+
+                # Use the spline object to find the smoothed stress (y-coordinate)
+                smoothed_stress_at_target = self.p_spline(stretch_at_target)
+                y_coords.append(float(smoothed_stress_at_target))
+
+        return x_coords, y_coords
+
+
 
     ### EXPORT TAB
 

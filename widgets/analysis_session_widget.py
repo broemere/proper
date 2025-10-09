@@ -15,7 +15,7 @@ from tabs.thresh_tab import ThreshTab
 from tabs.area_tab import AreaTab
 from tabs.thickness_tab import ThicknessTab
 from tabs.export_tab import ExportTab
-from tabs.stiffness_tab import StiffnessTab
+from tabs.smoothing_tab import SmoothingTab
 import os
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class AnalysisSessionWidget(QWidget):
     It manages its own DataPipeline and the UI components related to it.
     """
     tab_name_requested = Signal(str)
+    help_requested = Signal(str, str)
 
     def __init__(self, task_manager: TaskManager, settings: QSettings, parent=None):
         """
@@ -134,8 +135,9 @@ class AnalysisSessionWidget(QWidget):
         self.analysis_tabs.addTab(self.area_tab_left, "⭕ Area")
         self.thickness_tab = ThicknessTab(self.pipeline)
         self.analysis_tabs.addTab(self.thickness_tab, "✒️ Thickness")
-        self.stiffness_tab = StiffnessTab(self.pipeline)
-        self.analysis_tabs.addTab(self.stiffness_tab, "〰️ Stiffness")
+        self.smoothing_tab = SmoothingTab(self.pipeline)
+        self.smoothing_tab.help_requested.connect(self.help_requested)
+        self.analysis_tabs.addTab(self.smoothing_tab, "〰️ Smoothing")
         self.export_tab = ExportTab(self.pipeline)
         self.analysis_tabs.addTab(self.export_tab, "📦 Export")
 
@@ -195,7 +197,7 @@ class AnalysisSessionWidget(QWidget):
         base_name, _ = os.path.splitext(file_name)
 
         # Emit the signal to request the parent change the tab name
-        self.tab_name_requested.emit(base_name)
+        self.tab_name_requested.emit(base_name.strip("_video").strip("recording_").strip("_pressure"))
 
     def on_video_file_selected(self, path: str):
         """Handles the selection of a video file for this session."""
