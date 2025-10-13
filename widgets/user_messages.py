@@ -62,7 +62,7 @@ ERROR_CONTENT = {
     ),
     "area_incomplete": (
         "Issue: Area analysis incomplete.",
-        "Go to the Area tab and ensure all 5 blobs have been selected for each frame."
+        "Go to the Area tab and ensure all 5 blobs have been selected for the "
     ),
     "thickness_incomplete": (
         "Issue: Thickness analysis incomplete.",
@@ -71,10 +71,6 @@ ERROR_CONTENT = {
     "empty_data_array": (
         "Issue: XY data is missing or invalid.",
         "Go to 'Import CSV' and load a valid data file."
-    ),
-    "multiple_roots": (
-        "Issue: Multiple roots found in thickness backcalculation.",
-        "Report to developer."
     ),
     "invalid_roots": (
         "Issue: No valid thickness found in backcalculation.",

@@ -359,387 +359,6 @@ class DataPipeline(QObject):
         self.author = new_author
         log.info(f"User: {self.author}")
 
-    def set_thickness_data(self, lengths: list[float]):
-        """
-        Replaces the current thickness data with a new, complete list of line lengths.
-        This single method handles adding, undoing, and clearing lines.
-        """
-        self.thickness_data = lengths
-        log.info(f"Pipeline thickness data updated. {len(lengths)} lines.")
-        self.data_version += 1
-        self.thickness_changed.emit(lengths)
-
-    def pad_array(self, arr, target_len):
-        """Pads a short array to a target length with empty strings."""
-        # Create a new array of the target length, filled with empty strings
-        # and using the 'object' dtype to allow for mixed types.
-        padded_arr = np.full(target_len, np.nan, dtype=float)
-
-        # Copy the original data into the beginning of the new array
-        padded_arr[:len(arr)] = arr
-
-        return padded_arr
-
-    def validate_for_stress_stretch(self) -> tuple | None:
-        """
-        Checks if all prerequisite data for the stress-stretch calculation is present.
-
-        Returns:
-            A tuple (title, message) from error_descriptions if validation fails.
-            None if validation succeeds.
-        """
-        if len(self.smoothed_data["p"]) < 4:
-            return ERROR_CONTENT["empty_data_array"]
-
-        if self.conversion_factor == 0:
-            return ERROR_CONTENT["no_conversion_factor"]
-
-        if len(self.area_data_left) + len(self.area_data_right) < 10:
-            return ERROR_CONTENT["area_incomplete"]
-
-        if len(self.thickness_data) == 0:
-            return ERROR_CONTENT["thickness_incomplete"]
-
-        return None  # All checks passed
-
-    def get_stress_stretch(self):
-
-        n = len(self.area_data_left)
-        if n < 5:
-            raise UserError(
-                "Area analysis is incomplete.",
-                hint=f"You selected {n}/5 blobs in first image. Please click all 5, then retry."
-            )
-
-        n = len(self.area_data_right)
-        if n < 5:
-            raise UserError(
-                "Area analysis is incomplete.",
-                hint=f"You selected {n}/5 blobs in last image. Please click all 5, then retry."
-            )
-
-
-        data = self.smoothed_data
-        t_final = np.mean(n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
-        blobs_left = self.area_data_left
-        blobs_right = self.area_data_right
-
-        areas_left = []
-        areas_right = []
-
-        for props in blobs_left.values():
-            area, cx, cy, label = props
-            if label == "Middle":
-                area_mid_left = area / (self.conversion_factor ** 2)
-                ra_left = np.sqrt(area_mid_left/np.pi)
-            else:
-                areas_left.append(area / (self.conversion_factor ** 2))
-
-        area_left = np.mean(n_closest_numbers(areas_left, self.n_ellipses))
-        rb_left = (area_left/(np.pi*ra_left))
-
-        for props in blobs_right.values():
-            area, cx, cy, label = props
-            if label == "Middle":
-                area_mid_right = area / (self.conversion_factor ** 2)
-                ra_right = np.sqrt(area_mid_right/np.pi)
-            else:
-                areas_right.append(area / (self.conversion_factor ** 2))
-
-        area_right = np.mean(n_closest_numbers(areas_right, self.n_ellipses))
-        rb_right = (area_right/(np.pi*ra_right))
-
-        v_ext_left = (4 / 3) * np.pi * (ra_left * ra_left * rb_left)
-        v_ext_right = (4 / 3) * np.pi * (ra_right * ra_right * rb_right)
-
-        v_int_right = (4 / 3) * np.pi * ((ra_right-t_final) * (ra_right-t_final) * (rb_right-t_final))
-        v_wall = v_ext_right - v_int_right
-        v_int_left = v_ext_left - v_wall
-
-        coeffs = [1, (-2*ra_left-rb_left), (ra_left**2+2*ra_left*rb_left), -(ra_left**2)*rb_left+(3/4)*(1/np.pi)*(v_ext_left-v_wall)]
-        roots = np.roots(coeffs)
-        real_roots = []
-
-        for r in roots:
-            if np.isclose(r.imag, 0) and r.real > 0:  # Check if the imaginary part is close to zero
-                t_left = r.real
-                real_roots.append(t_left)
-        if len(real_roots) > 1:
-            log.ERROR(f"Multiple roots.")
-            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
-            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
-            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
-            title, msg = ERROR_CONTENT["multiple_roots"]
-            user_error(title, msg)
-            raise ValueError(f"Expected 1 real root, but found {len(real_roots)}: {real_roots}.")
-
-        if len(real_roots) == 1 and real_roots[0] < 0:
-            log.ERROR(f"Negative root.")
-            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
-            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
-            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
-            title, msg = ERROR_CONTENT["negative_thickness"]
-            user_error(title, msg)
-            raise ValueError(f"Expected positive root, but found t = {real_roots[0]}.")
-
-        frames = np.arange(self.left_index, self.right_index+1)
-        start = self.left_index - self.trim_start
-        stop = self.right_index - self.trim_start + 1
-        p_smoothed = self.smoothed_data["p"][start:stop]
-        thickness = np.linspace(t_left, t_final, len(frames))  # Assume linear
-        diameter = 2*((np.linspace(v_int_left, v_int_right, len(frames))*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear
-        initial_diameter = diameter[0]
-        stretch = diameter / initial_diameter
-        stress = (np.array(p_smoothed)*self.MMHG2KPA)*(diameter/2)/(2*thickness)
-
-        self.stress = stress
-        self.stretch = stretch
-
-    def generate_report(self):
-        print("Indices:", self.left_index, self.right_index)
-
-        data = self.smoothed_data
-        t_final = np.mean(n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
-        blobs_left = self.area_data_left
-        blobs_right = self.area_data_right
-        #print(t_final)
-        print(blobs_left)
-        print(blobs_right)
-
-        areas_left = []
-        areas_right = []
-
-        for props in blobs_left.values():
-            area, cx, cy, label = props
-            if label == "Middle":
-                area_mid_left = area / (self.conversion_factor ** 2)
-                ra_left = np.sqrt(area_mid_left/np.pi)
-            else:
-                areas_left.append(area / (self.conversion_factor ** 2))
-
-        area_left = np.mean(n_closest_numbers(areas_left, self.n_ellipses))
-        rb_left = (area_left/(np.pi*ra_left))
-
-        for props in blobs_right.values():
-            area, cx, cy, label = props
-            if label == "Middle":
-                area_mid_right = area / (self.conversion_factor ** 2)
-                ra_right = np.sqrt(area_mid_right/np.pi)
-            else:
-                areas_right.append(area / (self.conversion_factor ** 2))
-
-        area_right = np.mean(n_closest_numbers(areas_right, self.n_ellipses))
-        rb_right = (area_right/(np.pi*ra_right))
-
-        v_ext_left = (4 / 3) * np.pi * (ra_left * ra_left * rb_left)
-        v_ext_right = (4 / 3) * np.pi * (ra_right * ra_right * rb_right)
-
-        v_int_right = (4 / 3) * np.pi * ((ra_right-t_final) * (ra_right-t_final) * (rb_right-t_final))
-        v_wall = v_ext_right - v_int_right
-        v_int_left = v_ext_left - v_wall
-
-        print("Radius left", ra_left, rb_left)
-        print("Radius right", ra_right, rb_right)
-        print("Mid area", area_mid_left, area_mid_right)
-        print("Areas", area_left, area_right)
-        print("V_ext", v_ext_left, v_ext_right)
-        print("V_wall", v_wall)
-        print("V_int", v_int_left, v_int_right)
-
-
-        coeffs = [1, (-2*ra_left-rb_left), (ra_left**2+2*ra_left*rb_left), -(ra_left**2)*rb_left+(3/4)*(1/np.pi)*(v_ext_left-v_wall)]
-        roots = np.roots(coeffs)
-        real_roots = []
-
-        for r in roots:
-            if np.isclose(r.imag, 0) and r.real > 0:  # Check if the imaginary part is close to zero
-                t_left = r.real
-                real_roots.append(t_left)
-        if len(real_roots) > 1:
-            log.ERROR(f"Multiple roots.")
-            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
-            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
-            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
-            title, msg = ERROR_CONTENT["multiple_roots"]
-            user_error(title, msg)
-            raise ValueError(f"Expected 1 real root, but found {len(real_roots)}: {real_roots}.")
-
-        if len(real_roots) == 0:
-            log.ERROR(f"Invalid roots.")
-            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
-            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
-            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
-            title, msg = ERROR_CONTENT["invalid_roots"]
-            user_error(title, msg)
-            raise ValueError(f"Expected positive root, but found roots = {roots}.")
-
-        print("Thickness", t_left, t_final)
-
-        frames = np.arange(self.left_index, self.right_index+1)
-
-        start = self.left_index - self.trim_start
-        stop = self.right_index - self.trim_start + 1
-
-        print(start, stop)
-
-        t_trimmed = self.trimmed_data["t"][start:stop]
-        p_trimmed = self.trimmed_data["p"][start:stop]
-        p_zeroed = self.zeroed_data["p"][start:stop]
-        p_smoothed = self.smoothed_data["p"][start:stop]
-        #v_infused = np.array(t_trimmed) * self.infusion_rate
-        #v_resid = v_int_right - np.max(v_infused)
-        #v_corrected = v_infused + v_resid
-
-        thickness = np.linspace(t_left, t_final, len(frames))  # Assume linear
-
-        # volume = np.linspace(v_ext_left, v_ext_right, len(frames))
-        # ra = np.linspace(ra_left, ra_right, len(frames))
-        # rb = np.linspace(rb_left, rb_right, len(frames))
-        # thickness_corrected = []
-        # for i, v in enumerate(volume):
-        #     coeffs = [1, (-2 * ra[i] - rb[i]), (ra[i] ** 2 + 2 * ra[i] * rb[i]),
-        #               -(ra[i] ** 2) * rb[i] + (3 / 4) * (1 / np.pi) * (v - v_wall)]
-        #     roots = np.roots(coeffs)
-        #     for r in roots:
-        #         if not np.iscomplex(r):
-        #             thickness_corrected.append(float(r))  # Goes negative
-
-
-        diameter = 2*((np.linspace(v_int_left, v_int_right, len(frames))*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear
-
-        volume = np.linspace(v_int_left, v_int_right, len(frames))  # Assume linear
-        if np.any(volume < 0):
-            log.ERROR(f"Negative volume.")
-            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
-            log.info(f"t_left: {t_left}, t_final: {t_final}")
-            log.info(f"v_int_left: {v_int_left}, v_int_right: {v_int_right}, v_wall: {v_wall}")
-            title, msg = ERROR_CONTENT["negative_volume"]
-            user_error(title, msg)
-            raise ValueError(f"Expected positive inner volume, but found negative at {np.where(volume < 0)[0]}.")
-
-
-        #diameter = 2*((((v_infused + v_int_left)*3)/(4*np.pi))**(1/3))
-        initial_diameter = diameter[0]
-        stretch = diameter / initial_diameter
-        stress = (np.array(p_smoothed)*self.MMHG2KPA)*(diameter/2)/(2*thickness)
-
-        deriv_spline = self.p_spline.derivative()
-
-
-        stiffnesses = {}
-        for p_target in self.pressures_of_interest:
-            # 3. Find the time 't' (frame index) where p(t) = p_target
-            diff = np.abs(np.array(p_smoothed) - p_target)
-            i = np.argmin(diff)
-            if diff[i] < 0.25:
-                true_p = p_smoothed[i]
-                stretch_target = stretch[i]
-                stress_at_p = stress[i]
-                modulus = deriv_spline(stretch_target)
-                stiffnesses[str(p_target)] = {'true_p': true_p,
-                                              'modulus_kPa': modulus,
-                                              'stretch': stretch_target,
-                                              'stress': stress_at_p}
-
-        true_pressures = []
-        moduli = []
-        stretches = []
-        stresses = []
-        for p in self.pressures_of_interest:
-            # Use .get() to safely access the dictionary. It returns None if the key is missing.
-            stiffness_data = stiffnesses.get(str(p))
-
-            if stiffness_data:
-                # If data was found, append the values.
-                true_pressures.append(stiffness_data["true_p"])
-                moduli.append(stiffness_data["modulus_kPa"])
-                stretches.append(stiffness_data["stretch"])
-                stresses.append(stiffness_data["stress"])
-            else:
-                # If no data was found for this pressure, append a placeholder (Not a Number).
-                true_pressures.append(np.nan)
-                moduli.append(np.nan)
-                stretches.append(np.nan)
-                stresses.append(np.nan)
-
-        report_data = {
-            "frame": frames,
-            "t_trimmed": t_trimmed,
-            "p_trimmed": p_trimmed,
-            "p_zeroed": p_zeroed,
-            "p_smoothed": p_smoothed,
-            "thickness(mm)": thickness,
-            "diameter(midwall)": diameter,
-            "v_inner(mm3)": volume,
-            "stretch": stretch,
-            "stress(kpa)": stress,
-            "pressures_of_interest": self.pad_array(self.pressures_of_interest, len(frames)),
-            "true_pressure": self.pad_array(true_pressures, len(frames)),
-            "stiffness(kPa)": self.pad_array(moduli, len(frames)),
-            "stretch_at_poi": self.pad_array(stretches, len(frames)),
-            "stress_at_poi": self.pad_array(stresses, len(frames)),
-            "v_wall(mm3)": self.pad_array([v_wall], len(frames)),
-        }
-        header = ",".join(report_data.keys())
-        num_rows = len(frames)
-
-        # Ensure parent dir exists
-        filename = os.path.splitext(os.path.basename(self.csv_path))[0]
-        if filename.endswith("_pressure"):
-            filename = filename[:-9]
-
-        folder = os.path.dirname(self.csv_path)
-        filepath = Path(f"{folder}/{filename}_results.csv")
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-
-        if os.path.exists(filepath):
-            print("Results already found")
-            i = 2
-            filepath = Path(f"{folder}/{filepath.stem}_{i}{filepath.suffix}")
-            print(filepath)
-            while os.path.exists(filepath):
-                print("Many results already exist")
-                i += 1
-                filepath = Path(f"{folder}/{filepath.stem[:-2]}_{i}{filepath.suffix}")
-                print(filepath)
-
-        # 4. Write the CSV file row by row.
-        with open(filepath, 'w', newline='') as f:
-            f.write(header + '\n')
-
-            # Loop through each row index.
-            for i in range(num_rows):
-                # Get the i-th item from each column array.
-                row_values = [col[i] for col in report_data.values()]
-                # Replace any potential infinite values with NaN.
-                row_values = [np.nan if not np.isfinite(val) else val for val in row_values]
-                # Format the row for CSV, replacing NaN with empty strings.
-                formatted_row = [('' if np.isnan(val) else f'{val:.10g}') for val in row_values]
-                f.write(','.join(formatted_row) + '\n')
-
-        results_output = {"first": {
-                                    "Pressure": self.initial_pressure,
-                                    "Frame/Row": self.left_index,
-                                    "Radius a": ra_left,
-                                    "Radius b": rb_left,
-                                    "Wall Thickness": t_left,
-                                    "Volume": v_ext_left,
-                                    "V_wall": v_wall,
-                                    "V_lumen": v_int_left,
-        },
-            "last": {
-                "Pressure": self.final_pressure,
-                "Frame/Row": self.right_index,
-                "Radius a": ra_right,
-                "Radius b": rb_right,
-                "Wall Thickness": t_final,
-                "Volume": v_ext_right,
-                "V_wall": v_wall,
-                "V_lumen": v_int_right,
-            }
-        }
-
-        self.results_updated.emit(results_output)
 
 
     ### SCALE TAB
@@ -1238,7 +857,44 @@ class DataPipeline(QObject):
             data_store[middle_blob_id][3] = "Middle"
 
 
+
+    ### THICKNESS TAB
+
+    def set_thickness_data(self, lengths: list[float]):
+        """
+        Replaces the current thickness data with a new, complete list of line lengths.
+        This single method handles adding, undoing, and clearing lines.
+        """
+        self.thickness_data = lengths
+        log.info(f"Pipeline thickness data updated. {len(lengths)} lines.")
+        self.data_version += 1
+        self.thickness_changed.emit(lengths)
+
+
+
     ### SMOOTHING TAB
+
+    def validate_for_stress_stretch(self) -> tuple | None:
+        """
+        Checks if all prerequisite data for the stress-stretch calculation is present.
+
+        Returns:
+            A tuple (title, message) from error_descriptions if validation fails.
+            None if validation succeeds.
+        """
+        if len(self.smoothed_data["p"]) < 4:
+            return ERROR_CONTENT["empty_data_array"]
+
+        if self.conversion_factor == 0:
+            return ERROR_CONTENT["no_conversion_factor"]
+
+        if len(self.area_data_left) + len(self.area_data_right) < 10:
+            return ERROR_CONTENT["area_incomplete"]
+
+        if len(self.thickness_data) == 0:
+            return ERROR_CONTENT["thickness_incomplete"]
+
+        return None  # All checks passed
 
     def calculate_spline(self, s_value: int) -> np.ndarray | None:
         """
@@ -1305,6 +961,15 @@ class DataPipeline(QObject):
 
     ### EXPORT TAB
 
+    def validate_area_data(self):
+        """Checks if sufficient area data points are available."""
+        if len(self.area_data_left) < 5:
+            title, hint = ERROR_CONTENT["area_incomplete"]
+            user_error(title, (hint+"first frame."))
+        if len(self.area_data_right) < 5:
+            title, hint = ERROR_CONTENT["area_incomplete"]
+            user_error(title, (hint + "last frame."))
+
     def set_n_ellipses(self, value: int):
         if self.n_ellipses != value:
             self.n_ellipses = value
@@ -1312,3 +977,189 @@ class DataPipeline(QObject):
             self.data_version += 1
             self.n_ellipses_changed.emit(self.n_ellipses)
 
+    def process_blob_data(self, blob_data):
+        """
+        Calculates semi-axes radii (ra, rb) from blob properties.
+        This function is reusable for both left and right image data.
+        """
+        areas = []
+        ra = 0
+        for props in blob_data.values():
+            area, _, _, label = props
+            scaled_area = area / (self.conversion_factor ** 2)
+            if label == "Middle":
+                ra = np.sqrt(scaled_area / np.pi)
+            else:
+                areas.append(scaled_area)
+
+        mean_area = np.mean(n_closest_numbers(areas, self.n_ellipses))
+        rb = mean_area / (np.pi * ra) if ra > 0 else 0
+        return ra, rb
+
+    def solve_initial_thickness(self, ra_left, rb_left, v_int_left):
+        """Solves the cubic polynomial to find the initial wall thickness (t_left)."""
+        coeffs = [1, (-2 * ra_left - rb_left), (ra_left ** 2 + 2 * ra_left * rb_left),
+                  -(ra_left ** 2) * rb_left + (3 / (4 * np.pi)) * v_int_left]
+        roots = np.roots(coeffs)
+        real_positive_roots = [r.real for r in roots if np.isclose(r.imag, 0) and r.real > 0]
+
+        if len(real_positive_roots) != 1:
+            log.ERROR(f"Expected 1 positive real root, but found {len(real_positive_roots)}.")
+            title, msg = ERROR_CONTENT["invalid_roots"]
+            user_error(title, msg)
+            raise ValueError(f"Root finding failed. Roots: {roots}")
+
+        return real_positive_roots[0]
+
+    def get_stress_stretch(self):
+        self.validate_area_data()
+
+        self.t_final = np.mean(n_closest_numbers(self.thickness_data, max(1, len(self.thickness_data)-1))) / self.conversion_factor
+        self.ra_left, self.rb_left = self.process_blob_data(self.area_data_left)
+        self.ra_right, self.rb_right = self.process_blob_data(self.area_data_right)
+
+        self.v_ext_right = (4 / 3) * np.pi * (self.ra_right ** 2 * self.rb_right)
+        self.v_int_right = (4 / 3) * np.pi * ((self.ra_right-self.t_final) ** 2 * (self.rb_right-self.t_final))
+        self.v_wall = self.v_ext_right - self.v_int_right
+        self.v_ext_left = (4 / 3) * np.pi * (self.ra_left ** 2 * self.rb_left)
+        self.v_int_left = self.v_ext_left - self.v_wall
+
+        if self.v_int_left < 0:
+            log.ERROR(f"Negative volume.")
+            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}, t_final: {self.t_final}")
+            log.info(f"v_int_left: {self.v_int_left}, v_wall: {self.v_wall}, v_int_right: {self.v_int_right}")
+            title, msg = ERROR_CONTENT["negative_volume"]
+            user_error(title, msg)
+            raise ValueError(f"Expected positive inner volume, but found negative at initial internal volume.")
+
+        self.t_left = self.solve_initial_thickness(self.ra_left, self.rb_left, self.v_int_left)
+
+        frames = np.arange(self.left_index, self.right_index+1)
+        start = self.left_index - self.trim_start
+        stop = self.right_index - self.trim_start + 1
+        p_smoothed = self.smoothed_data["p"][start:stop]
+        thickness = np.linspace(self.t_left, self.t_final, len(frames))  # Assume linear !!!
+        volume = np.linspace(self.v_int_left, self.v_int_right, len(frames))  # Assume linear !!!
+        if np.any(volume < 0):
+            log.ERROR(f"Negative volume.")
+            log.info(f"ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}, t_left: {self.t_left}, "
+                     f"t_final: {self.t_final}, v_int_left: {self.v_int_left}, v_wall: {self.v_wall}, v_int_right: {self.v_int_right}")
+            title, msg = ERROR_CONTENT["negative_volume"]
+            user_error(title, msg)
+            raise ValueError(f"Expected positive inner volume, but found negative at {np.where(volume < 0)[0]}.")
+
+        diameter = 2*((volume*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear !!!
+
+        self.stretch = diameter / diameter[0]
+        self.stress = (np.array(p_smoothed) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
+
+        return frames, start, stop, thickness, volume, diameter, p_smoothed
+
+    def calculate_stiffness_at_poi(self, p_smoothed):
+        """Calculates stiffness and related metrics at pressures of interest."""
+        deriv_spline = self.p_spline.derivative()
+        stiffnesses = {}
+        for p_target in self.pressures_of_interest:
+            diff = np.abs(np.array(p_smoothed) - p_target)
+            i = np.argmin(diff)
+            if diff[i] < 0.25:
+                stiffnesses[str(p_target)] = {
+                    'true_p': p_smoothed[i],
+                    'modulus_kPa': deriv_spline(self.stretch[i]),
+                    'stretch': self.stretch[i],
+                    'stress': self.stress[i]
+                }
+        return stiffnesses
+
+    def generate_report(self):
+        """
+        Public method to perform all calculations and generate a detailed
+        CSV report and summary data.
+        """
+        frames, start, stop, thickness, volume, diameter, p_smoothed = self.get_stress_stretch()
+        stiffness_data = self.calculate_stiffness_at_poi(p_smoothed)
+
+        # Prepare data for CSV
+        num_frames = len(frames)
+        report_data = {
+            "frame": frames,
+            "t_trimmed": self.trimmed_data["t"][start:stop],
+            "p_trimmed": self.trimmed_data["p"][start:stop],
+            "p_zeroed": self.zeroed_data["p"][start:stop],
+            "p_smoothed(mmHg)": self.smoothed_data["p"][start:stop],
+            "thickness(mm)": thickness,
+            "diameter(midwall)": diameter,
+            "v_inner(mm3)": volume,
+            "stretch": self.stretch,
+            "stress(kpa)": self.stress,
+        }
+
+        # Unpack stiffness data into columns
+        poi_cols = {
+            "pressures_of_interest": [data.get('true_p', np.nan) for p, data in stiffness_data.items()],
+            "stiffness(kPa)": [data.get('modulus_kPa', np.nan) for p, data in stiffness_data.items()],
+            "stretch_at_poi": [data.get('stretch', np.nan) for p, data in stiffness_data.items()],
+            "stress_at_poi": [data.get('stress', np.nan) for p, data in stiffness_data.items()],
+        }
+
+        # Pad arrays to match the number of frames for CSV export
+        for key, val in poi_cols.items():
+            padded_array = np.full(num_frames, np.nan)
+            padded_array[:len(val)] = val
+            report_data[key] = padded_array
+
+        v_wall_col = np.full(num_frames, np.nan)
+        v_wall_col[0] = self.v_wall
+        report_data["v_wall(mm3)"] = v_wall_col
+
+        self.write_csv_report(report_data, num_frames)
+        self.emit_results_to_ui(report_data, num_frames)
+
+    def write_csv_report(self, report_data: dict, num_rows: int):
+        """Handles the logic of writing the final report to a CSV file."""
+        filename = os.path.splitext(os.path.basename(self.csv_path))[0].removesuffix("_pressure")
+        folder = os.path.dirname(self.csv_path)
+        filepath = Path(f"{folder}/{filename}_results.csv")
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        # Handle existing files by incrementing a counter
+        i = 1
+        base_stem = filepath.stem
+        while filepath.exists():
+            i += 1
+            filepath = filepath.with_name(f"{base_stem}_{i}.csv")
+
+        header = ",".join(report_data.keys())
+        with open(filepath, 'w', newline='') as f:
+            f.write(header + '\n')
+            for i in range(num_rows):
+                row_values = [col[i] for col in report_data.values()]
+                row_values = [np.nan if not np.isfinite(val) else val for val in row_values]
+                formatted_row = [('' if np.isnan(val) else f'{val:.10g}') for val in row_values]
+                f.write(','.join(formatted_row) + '\n')
+        print(f"Report successfully written to {filepath}")
+
+    def emit_results_to_ui(self, report_data: dict, num_rows: int):
+        results_output = {"first": {
+                                    "Pressure": self.initial_pressure,
+                                    "Frame/Row": self.left_index,
+                                    "Radius a": self.ra_left,
+                                    "Radius b": self.rb_left,
+                                    "Wall Thickness": self.t_left,
+                                    "Volume": self.v_ext_left,
+                                    "V_wall": self.v_wall,
+                                    "V_lumen": self.v_int_left,
+                                    },
+                            "last": {
+                                    "Pressure": self.final_pressure,
+                                    "Frame/Row": self.right_index,
+                                    "Radius a": self.ra_right,
+                                    "Radius b": self.rb_right,
+                                    "Wall Thickness": self.t_final,
+                                    "Volume": self.v_ext_right,
+                                    "V_wall": self.v_wall,
+                                    "V_lumen": self.v_int_right,
+                                    }
+                        }
+
+        self.results_updated.emit(results_output)
