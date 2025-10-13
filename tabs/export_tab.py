@@ -115,7 +115,7 @@ class ExportTab(QWidget):
                     unit = self.FIELD_DEFINITIONS.get(key, "")
                     formatted_value = format_value(value)
                     labels_dict[key].setText(f"{formatted_value} {unit}")
-                    if key == "V_lumen" and formatted_value < 0:
+                    if key == "V_lumen" and float(formatted_value) < 0:
                         labels_dict[key].setText(f"❌❌❌ {formatted_value} ❌❌❌ {unit}")
 
     @Slot(int)

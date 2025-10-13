@@ -373,7 +373,7 @@ class DataPipeline(QObject):
         """Pads a short array to a target length with empty strings."""
         # Create a new array of the target length, filled with empty strings
         # and using the 'object' dtype to allow for mixed types.
-        padded_arr = np.full(target_len, 0, dtype=float)
+        padded_arr = np.full(target_len, np.nan, dtype=float)
 
         # Copy the original data into the beginning of the new array
         padded_arr[:len(arr)] = arr
@@ -461,11 +461,26 @@ class DataPipeline(QObject):
         real_roots = []
 
         for r in roots:
-            if np.isclose(r.imag, 0):  # Check if the imaginary part is close to zero
+            if np.isclose(r.imag, 0) and r.real > 0:  # Check if the imaginary part is close to zero
                 t_left = r.real
                 real_roots.append(t_left)
         if len(real_roots) > 1:
-            raise ValueError(f"Expected 1 real root, but found {len(real_roots)}.")
+            log.ERROR(f"Multiple roots.")
+            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
+            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
+            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
+            title, msg = ERROR_CONTENT["multiple_roots"]
+            user_error(title, msg)
+            raise ValueError(f"Expected 1 real root, but found {len(real_roots)}: {real_roots}.")
+
+        if len(real_roots) == 1 and real_roots[0] < 0:
+            log.ERROR(f"Negative root.")
+            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
+            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
+            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
+            title, msg = ERROR_CONTENT["negative_thickness"]
+            user_error(title, msg)
+            raise ValueError(f"Expected positive root, but found t = {real_roots[0]}.")
 
         frames = np.arange(self.left_index, self.right_index+1)
         start = self.left_index - self.trim_start
@@ -534,9 +549,29 @@ class DataPipeline(QObject):
 
         coeffs = [1, (-2*ra_left-rb_left), (ra_left**2+2*ra_left*rb_left), -(ra_left**2)*rb_left+(3/4)*(1/np.pi)*(v_ext_left-v_wall)]
         roots = np.roots(coeffs)
+        real_roots = []
+
         for r in roots:
-            if not np.iscomplex(r):
-                t_left = float(r)
+            if np.isclose(r.imag, 0) and r.real > 0:  # Check if the imaginary part is close to zero
+                t_left = r.real
+                real_roots.append(t_left)
+        if len(real_roots) > 1:
+            log.ERROR(f"Multiple roots.")
+            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
+            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
+            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
+            title, msg = ERROR_CONTENT["multiple_roots"]
+            user_error(title, msg)
+            raise ValueError(f"Expected 1 real root, but found {len(real_roots)}: {real_roots}.")
+
+        if len(real_roots) == 0:
+            log.ERROR(f"Invalid roots.")
+            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
+            log.info(f"ra_left: {ra_left}, ra_right: {ra_right}, rb_left: {rb_left}, rb_right: {rb_right}")
+            log.info(f"t_final: {t_final}, v_ext_left: {v_ext_left}, v_ext_right: {v_ext_right}, v_wall: {v_wall}")
+            title, msg = ERROR_CONTENT["invalid_roots"]
+            user_error(title, msg)
+            raise ValueError(f"Expected positive root, but found roots = {roots}.")
 
         print("Thickness", t_left, t_final)
 
@@ -573,6 +608,15 @@ class DataPipeline(QObject):
         diameter = 2*((np.linspace(v_int_left, v_int_right, len(frames))*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear
 
         volume = np.linspace(v_int_left, v_int_right, len(frames))  # Assume linear
+        if np.any(volume < 0):
+            log.ERROR(f"Negative volume.")
+            log.info(f"n_ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}")
+            log.info(f"t_left: {t_left}, t_final: {t_final}")
+            log.info(f"v_int_left: {v_int_left}, v_int_right: {v_int_right}, v_wall: {v_wall}")
+            title, msg = ERROR_CONTENT["negative_volume"]
+            user_error(title, msg)
+            raise ValueError(f"Expected positive inner volume, but found negative at {np.where(volume < 0)[0]}.")
+
 
         #diameter = 2*((((v_infused + v_int_left)*3)/(4*np.pi))**(1/3))
         initial_diameter = diameter[0]
@@ -624,9 +668,9 @@ class DataPipeline(QObject):
             "p_trimmed": p_trimmed,
             "p_zeroed": p_zeroed,
             "p_smoothed": p_smoothed,
-            "thickness": thickness,
+            "thickness(mm)": thickness,
             "diameter(midwall)": diameter,
-            "v_inner": volume,
+            "v_inner(mm3)": volume,
             "stretch": stretch,
             "stress(kpa)": stress,
             "pressures_of_interest": self.pad_array(self.pressures_of_interest, len(frames)),
@@ -634,6 +678,7 @@ class DataPipeline(QObject):
             "stiffness(kPa)": self.pad_array(moduli, len(frames)),
             "stretch_at_poi": self.pad_array(stretches, len(frames)),
             "stress_at_poi": self.pad_array(stresses, len(frames)),
+            "v_wall(mm3)": self.pad_array([v_wall], len(frames)),
         }
         header = ",".join(report_data.keys())
         num_rows = len(frames)

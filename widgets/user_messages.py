@@ -72,4 +72,16 @@ ERROR_CONTENT = {
         "Issue: XY data is missing or invalid.",
         "Go to 'Import CSV' and load a valid data file."
     ),
+    "multiple_roots": (
+        "Issue: Multiple roots found in thickness backcalculation.",
+        "Report to developer."
+    ),
+    "invalid_roots": (
+        "Issue: No valid thickness found in backcalculation.",
+        "Report to developer."
+    ),
+    "negative_volume": (
+        "Issue: Inner volume found to be negative.",
+        "Report to developer."
+    )
 }
