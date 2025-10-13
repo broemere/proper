@@ -28,7 +28,7 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=[], # You can still exclude modules like QtSql, etc.
+    excludes=['pyqtgraph.opengl'], # Not required for 2D plotting only. Remove if 3D plots are used.
     noarchive=False,
     optimize=0,
 )
@@ -62,7 +62,7 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name=f"{app_name}.app", # <-- DYNAMIC
-        #icon=icon_file,
+        icon=icon_file,
         bundle_identifier=None,
     )
 else:

@@ -1,8 +1,51 @@
 import os
 import sys
+import logging
+import logging.handlers
+import tempfile
+from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPixmap, QCursor
+from config import APP_NAME
+
+
+def setup_logging():
+    """
+    Sets up logging to a safe, platform-specific location.
+    On macOS, this will be ~/Library/Logs/proper/
+    On Windows, C:/Users/user/AppData/Local/Temp/proper/
+    """
+    if sys.platform == "darwin":  # Mac
+        # Get the user's Library/Logs directory
+        log_dir = Path.home() / "Library" / "Logs" / APP_NAME
+    else:
+        # Fallback to current directory if not frozen
+        log_dir = Path(tempfile.gettempdir()) / APP_NAME if getattr(sys, "frozen", False) else Path.cwd()
+
+    os.makedirs(log_dir, exist_ok=True)
+    log_file_path = log_dir / f"{APP_NAME.lower()}.log"
+
+    # Use a rotating file handler to prevent log files from getting too large
+    handler = logging.handlers.RotatingFileHandler(
+        log_file_path, maxBytes=5 * 1024 * 1024, backupCount=1
+    )
+
+    # In development, also print to console. When bundled, only log to file.
+    if getattr(sys, "frozen", False):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[handler]
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[handler, logging.StreamHandler(sys.stdout)]
+        )
+    print(f"Logging to {log_file_path}")
+    return logging.getLogger(__name__)
 
 
 def resource_path(relative_path: str) -> str:
@@ -39,6 +82,10 @@ def load_cursor(name: str, hot_x: int, hot_y: int) -> QCursor:
 
     path_to_resource = os.path.join("resources", f"{name}{suffix}.png")
     absolute_path = resource_path(path_to_resource)
+    if not os.path.exists(absolute_path):
+        path_to_resource = os.path.join("resources", f"{name}.png")
+        absolute_path = resource_path(path_to_resource)
+        print("Retina cursors not found, defaulting to standard cursors")
 
     pix = QPixmap(absolute_path)
     # Only do a smooth resize on non-integer scales (e.g. 1.5, 2.25)
@@ -52,3 +99,12 @@ def load_cursor(name: str, hot_x: int, hot_y: int) -> QCursor:
     # Tag the pixmap so Qt treats its logical size correctly
     pix.setDevicePixelRatio(scale)
     return QCursor(pix, int(hot_x * scale), int(hot_y * scale))
+
+def load_icon():
+    if sys.platform == 'darwin':  # macOS
+        icon_filename = 'app.icns'
+    else:  # Windows (and other platforms)
+        icon_filename = 'app.ico'
+
+    icon_path = resource_path(f"resources/{icon_filename}")
+    return icon_path

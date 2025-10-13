@@ -458,9 +458,14 @@ class DataPipeline(QObject):
 
         coeffs = [1, (-2*ra_left-rb_left), (ra_left**2+2*ra_left*rb_left), -(ra_left**2)*rb_left+(3/4)*(1/np.pi)*(v_ext_left-v_wall)]
         roots = np.roots(coeffs)
+        real_roots = []
+
         for r in roots:
-            if not np.iscomplex(r):
-                t_left = float(r)
+            if np.isclose(r.imag, 0):  # Check if the imaginary part is close to zero
+                t_left = r.real
+                real_roots.append(t_left)
+        if len(real_roots) > 1:
+            raise ValueError(f"Expected 1 real root, but found {len(real_roots)}.")
 
         frames = np.arange(self.left_index, self.right_index+1)
         start = self.left_index - self.trim_start
@@ -592,38 +597,53 @@ class DataPipeline(QObject):
                                               'stretch': stretch_target,
                                               'stress': stress_at_p}
 
-        data = np.column_stack([
-            frames,
-            t_trimmed,
-            p_trimmed,
-            p_zeroed,
-            p_smoothed,
-            thickness,
-            diameter,
-            volume,
-            stretch,
-            stress,
-            self.pad_array(self.pressures_of_interest, len(frames)),
-            self.pad_array([stiffnesses[str(p)]["true_p"] for p in self.pressures_of_interest], len(frames)),
-            self.pad_array([stiffnesses[str(p)]["modulus_kPa"] for p in self.pressures_of_interest], len(frames)),
-            self.pad_array([stiffnesses[str(p)]["stretch"] for p in self.pressures_of_interest], len(frames)),
-            self.pad_array([stiffnesses[str(p)]["stress"] for p in self.pressures_of_interest], len(frames)),
-        ])
+        true_pressures = []
+        moduli = []
+        stretches = []
+        stresses = []
+        for p in self.pressures_of_interest:
+            # Use .get() to safely access the dictionary. It returns None if the key is missing.
+            stiffness_data = stiffnesses.get(str(p))
 
-        # Optional: replace inf with nan so Excel doesn't choke
-        data = np.where(np.isfinite(data), data, np.nan)
+            if stiffness_data:
+                # If data was found, append the values.
+                true_pressures.append(stiffness_data["true_p"])
+                moduli.append(stiffness_data["modulus_kPa"])
+                stretches.append(stiffness_data["stretch"])
+                stresses.append(stiffness_data["stress"])
+            else:
+                # If no data was found for this pressure, append a placeholder (Not a Number).
+                true_pressures.append(np.nan)
+                moduli.append(np.nan)
+                stretches.append(np.nan)
+                stresses.append(np.nan)
 
-        # Prepare header
-        header = "frame,t_trimmed,p_trimmed,p_zeroed,p_smoothed,thickness,diameter(midwall),v_inner,stretch,stress,pressures of interest,true pressure,stiffness(kpa),stretch,stress"
+        report_data = {
+            "frame": frames,
+            "t_trimmed": t_trimmed,
+            "p_trimmed": p_trimmed,
+            "p_zeroed": p_zeroed,
+            "p_smoothed": p_smoothed,
+            "thickness": thickness,
+            "diameter(midwall)": diameter,
+            "v_inner": volume,
+            "stretch": stretch,
+            "stress(kpa)": stress,
+            "pressures_of_interest": self.pad_array(self.pressures_of_interest, len(frames)),
+            "true_pressure": self.pad_array(true_pressures, len(frames)),
+            "stiffness(kPa)": self.pad_array(moduli, len(frames)),
+            "stretch_at_poi": self.pad_array(stretches, len(frames)),
+            "stress_at_poi": self.pad_array(stresses, len(frames)),
+        }
+        header = ",".join(report_data.keys())
+        num_rows = len(frames)
 
         # Ensure parent dir exists
-
         filename = os.path.splitext(os.path.basename(self.csv_path))[0]
         if filename.endswith("_pressure"):
             filename = filename[:-9]
 
         folder = os.path.dirname(self.csv_path)
-
         filepath = Path(f"{folder}/{filename}_results.csv")
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -638,16 +658,19 @@ class DataPipeline(QObject):
                 filepath = Path(f"{folder}/{filepath.stem[:-2]}_{i}{filepath.suffix}")
                 print(filepath)
 
-        # Save CSV (Excel-friendly)
-        # fmt="%.10g" keeps numbers compact but precise; tweak if you want more/less precision
-        np.savetxt(
-            filepath,
-            data,
-            delimiter=",",
-            header=header,
-            comments="",  # avoid '# ' prefix in header
-            fmt="%.10g",
-        )
+        # 4. Write the CSV file row by row.
+        with open(filepath, 'w', newline='') as f:
+            f.write(header + '\n')
+
+            # Loop through each row index.
+            for i in range(num_rows):
+                # Get the i-th item from each column array.
+                row_values = [col[i] for col in report_data.values()]
+                # Replace any potential infinite values with NaN.
+                row_values = [np.nan if not np.isfinite(val) else val for val in row_values]
+                # Format the row for CSV, replacing NaN with empty strings.
+                formatted_row = [('' if np.isnan(val) else f'{val:.10g}') for val in row_values]
+                f.write(','.join(formatted_row) + '\n')
 
         results_output = {"first": {
                                     "Pressure": self.initial_pressure,
@@ -783,11 +806,10 @@ class DataPipeline(QObject):
         Returns:
             int: The absolute index (relative to raw_data) of the closest point.
         """
-        if self.smoothed_data['p'].size == 0:
+        pressure_array = np.asarray(self.smoothed_data['p'])
+        if pressure_array.size == 0:
             log.warning("Cannot find pressure; smoothed data is empty.")
             return self.trim_start  # Return a safe default
-        # Use numpy for efficient searching
-        pressure_array = np.asarray(self.smoothed_data['p'])
         # Find the index in the *trimmed* data array that has the minimum difference
         relative_index = np.argmin(np.abs(pressure_array - target_pressure))
         # Convert the relative index back to an absolute index by adding the trim_start offset

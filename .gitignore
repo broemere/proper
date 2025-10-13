@@ -6,6 +6,7 @@ dist/
 __pycache__/
 *.py[cod]
 proper.log
+proper.log.1
 resources/*
 !resources/app.ico
 !resources/app.icns
