@@ -1039,7 +1039,9 @@ class DataPipeline(QObject):
         stop = self.right_index - self.trim_start + 1
         p_smoothed = self.smoothed_data["p"][start:stop]
         thickness = np.linspace(self.t_left, self.t_final, len(frames))  # Assume linear !!!
-        volume = np.linspace(self.v_int_left, self.v_int_right, len(frames))  # Assume linear !!!
+        # More physically correct equation for thickness. t(V) = t_final * (V_final^(2/3)) / V^(2/3)
+        thickness_true = self.t_final * (self.v_ext_right**(2/3)) / (np.linspace(self.v_ext_left, self.v_ext_right, len(frames))**(2/3))
+        volume = np.linspace(self.v_int_left, self.v_int_right, len(frames))  # Assume linear !!! Cannot fix without full area data.
         if np.any(volume < 0):
             log.ERROR(f"Negative volume.")
             log.info(f"ellipses: {self.n_ellipses}, conversion_factor: {self.conversion_factor}, t_left: {self.t_left}, "
@@ -1048,12 +1050,15 @@ class DataPipeline(QObject):
             user_error(title, msg)
             raise ValueError(f"Expected positive inner volume, but found negative at {np.where(volume < 0)[0]}.")
 
-        diameter = 2*((volume*(3/(4*np.pi)))**(1/3)) + thickness  # Assume linear !!!
+        diameter = 2*((volume*(3/(4*np.pi)))**(1/3)) + thickness  # Correct equation for diameter based on linear volume
+        diameter_true = 2*((volume*(3/(4*np.pi)))**(1/3)) + thickness_true
 
         self.stretch = diameter / diameter[0]
+        stretch_true = diameter_true / diameter_true[0]
         self.stress = (np.array(p_smoothed) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
+        stress_true = (np.array(p_smoothed) * self.MMHG2KPA) * (diameter_true / 2) / (2 * thickness_true)
 
-        return frames, start, stop, thickness, volume, diameter, p_smoothed
+        return frames, start, stop, thickness, volume, diameter, p_smoothed#, thickness_true, stress_true, stretch_true
 
     def calculate_stiffness_at_poi(self, p_smoothed):
         """Calculates stiffness and related metrics at pressures of interest."""
@@ -1071,6 +1076,23 @@ class DataPipeline(QObject):
                 }
         return stiffnesses
 
+    def calculate_intervals(self, p_smoothed):
+        output = {}
+        top_p = int(np.floor(np.max(p_smoothed)))
+        if top_p % 2 == 1:
+            top_p = top_p - 1
+        targets = np.arange(2, top_p+2, 2)
+        for p_target in targets:
+            diff = np.abs(np.array(p_smoothed) - p_target)
+            i = np.argmin(diff)
+            output[str(p_target)] = {
+                'stretch': np.mean(self.stretch[i-2:i+3]),
+                'stress': np.mean(self.stress[i - 2:i + 3]),
+            }
+        return output
+
+
+
     def generate_report(self):
         """
         Public method to perform all calculations and generate a detailed
@@ -1078,6 +1100,7 @@ class DataPipeline(QObject):
         """
         frames, start, stop, thickness, volume, diameter, p_smoothed = self.get_stress_stretch()
         stiffness_data = self.calculate_stiffness_at_poi(p_smoothed)
+        interval_data = self.calculate_intervals(p_smoothed)
 
         # Prepare data for CSV
         num_frames = len(frames)
@@ -1092,21 +1115,38 @@ class DataPipeline(QObject):
             "v_inner(mm3)": volume,
             "stretch": self.stretch,
             "stress(kpa)": self.stress,
+            # "stress_true": stress_true,
+            # "stretch_true": stretch_true,
+            # "thickness_true": thickness_true,
         }
 
         # Unpack stiffness data into columns
         poi_cols = {
-            "pressures_of_interest": [data.get('true_p', np.nan) for p, data in stiffness_data.items()],
+            "pressures_of_interest": self.pressures_of_interest,
+            "nearest_pressure": [data.get('true_p', np.nan) for p, data in stiffness_data.items()],
             "stiffness(kPa)": [data.get('modulus_kPa', np.nan) for p, data in stiffness_data.items()],
             "stretch_at_poi": [data.get('stretch', np.nan) for p, data in stiffness_data.items()],
             "stress_at_poi": [data.get('stress', np.nan) for p, data in stiffness_data.items()],
         }
+
+        interval_cols = {
+            "pressure_intervals": [p for p, data in interval_data.items()],
+            "stretch_intervals": [data.get('stretch', np.nan) for p, data in interval_data.items()],
+            "stress_intervals": [data.get('stress', np.nan) for p, data in interval_data.items()],
+        }
+
+        for key, val in interval_cols.items():
+            padded_array = np.full(num_frames, np.nan)
+            padded_array[:len(val)] = val
+            report_data[key] = padded_array
 
         # Pad arrays to match the number of frames for CSV export
         for key, val in poi_cols.items():
             padded_array = np.full(num_frames, np.nan)
             padded_array[:len(val)] = val
             report_data[key] = padded_array
+
+
 
         v_wall_col = np.full(num_frames, np.nan)
         v_wall_col[0] = self.v_wall
