@@ -26,6 +26,7 @@ a = Analysis(
     hiddenimports=[
         'scipy._cyutility'
     ],
+    collect_stubs=['skimage'],
     hookspath=[],
     runtime_hooks=[],
     excludes=['pyqtgraph.opengl'], # Not required for 2D plotting only. Remove if 3D plots are used.

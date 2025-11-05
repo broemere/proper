@@ -1146,8 +1146,6 @@ class DataPipeline(QObject):
             padded_array[:len(val)] = val
             report_data[key] = padded_array
 
-
-
         v_wall_col = np.full(num_frames, np.nan)
         v_wall_col[0] = self.v_wall
         report_data["v_wall(mm3)"] = v_wall_col
