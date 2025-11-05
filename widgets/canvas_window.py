@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap, QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea, QMessageBox, QSizePolicy
 import numpy as np
-
+import sys
 # Assuming your PolygonCanvas is in a 'widgets' sub-directory.
 # Adjust the import path if necessary.
 from .polygon_canvas import PolygonCanvas
@@ -30,11 +30,14 @@ class CanvasWindow(QWidget):
         self.setWindowTitle("Drawing Canvas")
         # Set a reasonable default size for the window.
         self.showMaximized()
-
+        self.platform = 'mac' if sys.platform == 'darwin' else 'win'
+        self.ctrl_key = "Cmd" if self.platform == "mac" else "Ctrl"
         self.init_ui()
 
         # Load the provided pixmap into the canvas.
         self.polygon_canvas.set_pixmap(background_pixmap)
+
+
 
     def init_ui(self):
         """
@@ -54,12 +57,12 @@ class CanvasWindow(QWidget):
 
         # --- Drawing Controls ---
         ctrl_row = QHBoxLayout()
-        undo_btn = QPushButton("Undo")
+        undo_btn = QPushButton(f"Undo [{self.ctrl_key}+Z]")
         undo_btn.setToolTip("Undo last polygon (Ctrl+Z)")
         undo_btn.clicked.connect(self.polygon_canvas.undo_last_polygon)
         ctrl_row.addWidget(undo_btn)
 
-        self.tool_btn = QPushButton("Lasso")
+        self.tool_btn = QPushButton("Lasso [T]")
         self.tool_btn.setToolTip("Change drawing tool (T)")
         self.tool_btn.clicked.connect(self._toggle_tool)
         self.polygon_canvas.tool_changed.connect(self._toggle_tool)
@@ -93,13 +96,13 @@ class CanvasWindow(QWidget):
 
         # Set initial state for buttons
         self._update_color_button(self.polygon_canvas.final_color)
-        self.tool_btn.setText(self.polygon_canvas.current_tool.title())
+        self.tool_btn.setText(self.polygon_canvas.current_tool.title() + " [T]")
 
     def _toggle_tool(self):
         """Switches between 'polygon' and 'lasso' tools."""
         new_tool = 'polygon' if self.polygon_canvas.current_tool == 'lasso' else 'lasso'
         self.polygon_canvas.set_tool(new_tool)
-        self.tool_btn.setText(new_tool.title())
+        self.tool_btn.setText(new_tool.title() + " [T]")
 
     def _toggle_final_color(self):
         """Switches between black and white fill colors."""
@@ -111,7 +114,7 @@ class CanvasWindow(QWidget):
         """Updates the color button's appearance."""
         fill_color = "white" if color.value() > 127 else "black"
         text_color = "black" if color.value() > 127 else "white"
-        self.color_btn.setText(f"Fill: {fill_color.title()}")
+        self.color_btn.setText(f"Fill: {fill_color.title()} [Space]")
         self.color_btn.setStyleSheet(f"background-color: {color.name()}; color: {text_color};")
 
     def _save_and_close(self):

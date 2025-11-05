@@ -47,7 +47,7 @@ class ScaleTab(QWidget):
         self.mode_group.addButton(self.line_btn)
         ctrl_row.addWidget(self.zoom_btn)
         ctrl_row.addWidget(self.line_btn)
-        self.undo_btn = QPushButton("Undo Line")
+        self.undo_btn = QPushButton(f"Undo Line")
         ctrl_row.addWidget(self.undo_btn)
         ctrl_row.addStretch()
         layout.addLayout(ctrl_row)

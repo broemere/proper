@@ -1,5 +1,4 @@
 from logging import ERROR
-
 from PySide6.QtCore import QObject, Signal
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
@@ -117,6 +116,7 @@ class DataPipeline(QObject):
 
         # EXPORT TAB
         self.n_ellipses = 0
+
 
 
     def register_observer(self, key: str, callback):
@@ -652,9 +652,9 @@ class DataPipeline(QObject):
                 self.right_thresh_blobs = image_array.astype(np.uint8)
 
         # back up the current thresholded images BEFORE applying the new blobs.
-        if self.left_threshed is not None:
+        if self.left_threshed is not None and side == "left":
             self.left_threshed_old = self.left_threshed.copy()
-        if self.right_threshed is not None:
+        if self.right_threshed is not None and side == "right":
             self.right_threshed_old = self.right_threshed.copy()
 
         self.apply_thresh()
