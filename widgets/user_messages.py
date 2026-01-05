@@ -20,7 +20,7 @@ HELP_CONTENT = {
         <p>
         This filter uses a <b>Univariate Spline</b> technique, which 
         creates a set of mathematical curves that pass through or near the data points.
-        The result a new, perfectly continuous curve that represents the 'best fit' of the
+        The result is a new, perfectly continuous curve that represents the 'best fit' of the
         original data, effectively tamping down the wave-like noise.
         </p>
 
