@@ -22,12 +22,11 @@ Developed with research scientists. Vastly shortens data analysis time, and redu
   * Time
   * Pressure
   * Wall Thickness
-  * Spherical mid-wall diameter
+  * Mid-wall diameter
   * Inner volume
   * Stretch
   * Stress
   * Stress-stretch average at each 2mmHg pressure intervals
-    * stress and stretch are averaged with a window size 5 centered on the pressure interval
     * Allows for easy comparison across subjects at the same pressures
   * Stiffness calculation at each 5mmHg pressure interval
     * Derivative of forced-continuous smoothing filter at pressure of interest
