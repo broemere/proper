@@ -19,22 +19,19 @@ Developed with research scientists. Vastly shortens data analysis time, and redu
 * Smoothing filter for improved derivative calculations
 * Complete data analysis export to csv:
   * Frame number
-  * Time (trimmed) [s]
-  * Pressure (trimmed) [mmHg]
-  * Pressure (zeroed) [mmHg]
-  * Pressure (smoothed) [mmHg]
-  * Wall Thickness [mm]
-  * Spherical mid-wall diameter [mm]
-  * Inner volume [mm<sup>3</sup>]
-  * Stretch [-]
-  * Stress [kPa]
-  * Stress-stretch average at each 2mmHg pressure interval
+  * Time
+  * Pressure
+  * Wall Thickness
+  * Spherical mid-wall diameter
+  * Inner volume
+  * Stretch
+  * Stress
+  * Stress-stretch average at each 2mmHg pressure intervals
     * stress and stretch are averaged with a window size 5 centered on the pressure interval
     * Allows for easy comparison across subjects at the same pressures
   * Stiffness calculation at each 5mmHg pressure interval
-    * Derivative of forced-continuous smoothing filter at pressure interval
-  * Stress and stretch values nearest to each 5mmHg pressure interval
-  * Wall volume (mm<sup>3</sup>)
+    * Derivative of forced-continuous smoothing filter at pressure of interest
+    * Stress-stretch values nearest to each 5mmHg pressure
 
 ---
 
