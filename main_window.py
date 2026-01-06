@@ -2,11 +2,12 @@ import logging
 from PySide6.QtCore import QSettings, Slot, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog
-from config import APP_NAME, SAVE_FILETYPE
+from config import APP_NAME, APP_VERSION, SAVE_FILETYPE, REPO_URL
 from processing.task_manager import TaskManager
 from widgets.status_bar import StatusBarWidget
 from widgets.analysis_session_widget import AnalysisSessionWidget
 from widgets.error_bus import bus
+from widgets.update_checker import UpdateChecker
 import json
 import gzip
 import os
@@ -36,6 +37,11 @@ class MainWindow(QMainWindow):
 
         # Start with a single analysis session by default
         self.add_new_super_tab()
+
+        self.update_checker = UpdateChecker()
+        self.update_checker.update_available.connect(self.on_update_available)
+        self.update_checker.start()  # Runs in background, won't freeze app
+
         log.info("MainWindow initialized with one session.")
 
     def init_ui(self):
@@ -366,6 +372,25 @@ class MainWindow(QMainWindow):
         else:
             self.resize(1300, 750)  # Fallback to a default size
 
+    @Slot(str)
+    def on_update_available(self, new_version):
+        """
+        Slot called only if the UpdateChecker finds a newer version.
+        """
+        log.info(f"Update available: {new_version}")
+
+        # Construct a friendly message with a link
+        repo_url = "https://github.com/broemere/proper/releases/latest"
+        msg = (
+            f"A new version of {APP_NAME} is available!<br><br>"
+            f"Current version: <b>v{APP_VERSION}</b><br>"
+            f"New version: <b>{new_version}</b><br><br>"
+            f"Click <a href='{REPO_URL}'>here</a> to view the release page."
+        )
+
+        # Use your existing dialog function
+        self.show_info_dialog("Update Available", msg)
+
     @Slot(tuple)
     def show_error_dialog(self, err_tb):
         """Displays a modal dialog for critical errors from background tasks."""
@@ -391,6 +416,7 @@ class MainWindow(QMainWindow):
         msg_box.setIcon(QMessageBox.Information)
         msg_box.setWindowTitle(title)
         msg_box.setTextFormat(Qt.RichText)  # Tell the box to parse HTML
+        msg_box.setTextInteractionFlags(Qt.TextBrowserInteraction)
         msg_box.setText(f"<b>{title}</b>")
         msg_box.setInformativeText(message)
         msg_box.setStandardButtons(QMessageBox.Ok)
