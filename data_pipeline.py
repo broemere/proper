@@ -59,8 +59,8 @@ class DataPipeline(QObject):
         super().__init__(parent)
         self.raw_data = {"t": [], "p": []}
         self.trimmed_data = {"t": [], "p": []}
-        self.zeroed_data = {"t": [], "p": []}
         self.smoothed_data = {"t": [], "p": []}
+        self.zeroed_data = {"t": [], "p": []}
         self.csv_path = None
         self.video = None
         self.frame_count = 0
@@ -118,7 +118,6 @@ class DataPipeline(QObject):
         self.n_ellipses = 0
 
 
-
     def register_observer(self, key: str, callback):
         """Register a callback to be invoked when the given key changes."""
         if key not in self._observers:
@@ -144,13 +143,13 @@ class DataPipeline(QObject):
                 key: self.raw_data[key][start_idx:stop_idx]
                 for key in self.raw_data
             }
-            # 2. Apply zeroing on the trimmed data (using the current smoothing parameters too).
-            self.zeroed_data = zero_data(self.trimmed_data, self.zeroing_method, self.zeroing_window + 1)
+            # 2. Apply smoothing on the trimmed data
+            self.smoothed_data = smooth_data(self.trimmed_data, self.smoothing_method, self.smoothing_window + 1)
             # 3. Apply smoothing on the trimmed data.
-            self.smoothed_data = smooth_data(self.zeroed_data, self.smoothing_method, self.smoothing_window + 1)
+            self.zeroed_data = zero_data(self.smoothed_data, self.zeroing_method, self.zeroing_window + 1)
             self.data_version += 1
-            self.notify_observers('transformed', [self.zeroed_data, self.smoothed_data])
-            print("Points plotted:", len(self.smoothed_data["p"]))
+            self.notify_observers('transformed', [self.trimmed_data, self.smoothed_data,self.zeroed_data])
+            print("Points plotted:", len(self.zeroed_data["p"]))
 
     def load_csv_file(self, file_path: str):
         """
@@ -470,9 +469,9 @@ class DataPipeline(QObject):
         Returns:
             int: The absolute index (relative to raw_data) of the closest point.
         """
-        pressure_array = np.asarray(self.smoothed_data['p'])
+        pressure_array = np.asarray(self.zeroed_data['p'])
         if pressure_array.size == 0:
-            log.warning("Cannot find pressure; smoothed data is empty.")
+            log.warning("Cannot find pressure; zeroed data is empty.")
             return self.trim_start  # Return a safe default
         # Find the index in the *trimmed* data array that has the minimum difference
         relative_index = np.argmin(np.abs(pressure_array - target_pressure))
@@ -506,11 +505,11 @@ class DataPipeline(QObject):
         Processes and returns the pressure data needed for the UI display.
         The Model is responsible for this logic.
         """
-        if not self.csv_path or "p" not in self.smoothed_data:
+        if not self.csv_path or "p" not in self.zeroed_data:
             return {"pre": "", "current": "0.00", "post": ""}
         # All the slicing and formatting logic is now here
         new_index = index - self.trim_start
-        p_data = self.smoothed_data["p"]
+        p_data = self.zeroed_data["p"]
         pre_vals = p_data[max(0, new_index - 3):new_index]
         current_val = p_data[new_index]
         post_vals = p_data[new_index+1:new_index+4]
@@ -882,7 +881,7 @@ class DataPipeline(QObject):
             A tuple (title, message) from error_descriptions if validation fails.
             None if validation succeeds.
         """
-        if len(self.smoothed_data["p"]) < 4:
+        if len(self.zeroed_data["p"]) < 4:
             return ERROR_CONTENT["empty_data_array"]
 
         if self.conversion_factor == 0:
@@ -948,12 +947,12 @@ class DataPipeline(QObject):
 
         start = self.left_index - self.trim_start
         stop = self.right_index - self.trim_start + 1
-        p_smoothed = np.array(self.smoothed_data["p"][start:stop])
+        p_zeroed = np.array(self.zeroed_data["p"][start:stop])
 
         # 2. Loop through the target pressures
         for p_target in self.pressures_of_interest:
             # Find the index of the closest pressure in the raw data
-            diff = np.abs(p_smoothed - p_target)
+            diff = np.abs(p_zeroed - p_target)
             i = np.argmin(diff)
             if diff[i] < 0.25:
                 # Use that index to find the corresponding stretch value (x-coordinate)
@@ -1046,7 +1045,7 @@ class DataPipeline(QObject):
         frames = np.arange(self.left_index, self.right_index+1)
         start = self.left_index - self.trim_start
         stop = self.right_index - self.trim_start + 1
-        p_smoothed = self.smoothed_data["p"][start:stop]
+        p_zeroed = self.zeroed_data["p"][start:stop]
         thickness = np.linspace(self.t_left, self.t_final, len(frames))  # Assume linear !!!
         # More physically correct equation for thickness. t(V) = t_final * (V_final^(2/3)) / V^(2/3)
         thickness_true = self.t_final * (self.v_ext_right**(2/3)) / (np.linspace(self.v_ext_left, self.v_ext_right, len(frames))**(2/3))
@@ -1064,35 +1063,35 @@ class DataPipeline(QObject):
 
         self.stretch = diameter / diameter[0]
         stretch_true = diameter_true / diameter_true[0]
-        self.stress = (np.array(p_smoothed) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
-        stress_true = (np.array(p_smoothed) * self.MMHG2KPA) * (diameter_true / 2) / (2 * thickness_true)
+        self.stress = (np.array(p_zeroed) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
+        stress_true = (np.array(p_zeroed) * self.MMHG2KPA) * (diameter_true / 2) / (2 * thickness_true)
 
-        return frames, start, stop, thickness, volume, diameter, p_smoothed#, thickness_true, stress_true, stretch_true
+        return frames, start, stop, thickness, volume, diameter, p_zeroed#, thickness_true, stress_true, stretch_true
 
-    def calculate_stiffness_at_poi(self, p_smoothed):
+    def calculate_stiffness_at_poi(self, p_zeroed):
         """Calculates stiffness and related metrics at pressures of interest."""
         deriv_spline = self.p_spline.derivative()
         stiffnesses = {}
         for p_target in self.pressures_of_interest:
-            diff = np.abs(np.array(p_smoothed) - p_target)
+            diff = np.abs(np.array(p_zeroed) - p_target)
             i = np.argmin(diff)
             if diff[i] < 0.25:
                 stiffnesses[str(p_target)] = {
-                    'true_p': p_smoothed[i],
+                    'true_p': p_zeroed[i],
                     'modulus_kPa': deriv_spline(self.stretch[i]),
                     'stretch': self.stretch[i],
                     'stress': self.stress[i]
                 }
         return stiffnesses
 
-    def calculate_intervals(self, p_smoothed):
+    def calculate_intervals(self, p_zeroed):
         output = {}
-        top_p = int(np.floor(np.max(p_smoothed)))
+        top_p = int(np.floor(np.max(p_zeroed)))
         if top_p % 2 == 1:
             top_p = top_p - 1
         targets = np.arange(2, top_p+2, 2)
         for p_target in targets:
-            diff = np.abs(np.array(p_smoothed) - p_target)
+            diff = np.abs(np.array(p_zeroed) - p_target)
             i = np.argmin(diff)
             output[str(p_target)] = {
                 'stretch': np.mean(self.stretch[i-2:i+3]),
@@ -1101,15 +1100,14 @@ class DataPipeline(QObject):
         return output
 
 
-
     def generate_report(self):
         """
         Public method to perform all calculations and generate a detailed
         CSV report and summary data.
         """
-        frames, start, stop, thickness, volume, diameter, p_smoothed = self.get_stress_stretch()
-        stiffness_data = self.calculate_stiffness_at_poi(p_smoothed)
-        interval_data = self.calculate_intervals(p_smoothed)
+        frames, start, stop, thickness, volume, diameter, p_zeroed = self.get_stress_stretch()
+        stiffness_data = self.calculate_stiffness_at_poi(p_zeroed)
+        interval_data = self.calculate_intervals(p_zeroed)
 
         # Prepare data for CSV
         num_frames = len(frames)
@@ -1117,8 +1115,8 @@ class DataPipeline(QObject):
             "frame": frames,
             "t_trimmed": self.trimmed_data["t"][start:stop],
             "p_trimmed": self.trimmed_data["p"][start:stop],
-            "p_zeroed": self.zeroed_data["p"][start:stop],
-            "p_smoothed(mmHg)": self.smoothed_data["p"][start:stop],
+            "p_smoothed": self.smoothed_data["p"][start:stop],
+            "p_zeroed(mmHg)": self.zeroed_data["p"][start:stop],
             "thickness(mm)": thickness,
             "diameter(midwall)": diameter,
             "v_inner(mm3)": volume,

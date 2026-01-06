@@ -25,34 +25,43 @@ class PlotTab(QWidget):
         tab_layout = QVBoxLayout(self)
 
         # Transformed Data Plot
-        self.data_plot = self._create_plot_widget("<b>Zeroed and Smoothed Data</b>")  # Title is now bold
+        self.data_plot = self._create_plot_widget("<b>Trimmed and Final Data</b>")  # Title is now bold
         self.data_plot.addLegend()
 
         # --- AESTHETIC TWEAK: Define new colors for clarity ---
         # A vibrant green for the main (smoothed) curve
-        smoothed_color = QColor("#16A085")  # A nice green shade
+        zeroed_color = QColor("#16A085")  # A nice green shade
         # A semi-transparent version of the foreground color for the background curve
         unsmoothed_color = QColor(self._fg_color())
         unsmoothed_color.setAlpha(100)  # Makes it less prominent
+        smoothed_color = QColor(self._fg_color())
+        smoothed_color.setAlpha(200)  # Makes it less prominent
 
         # --- PLOT STYLE CHANGE: Unsmoothed curve is now a thin, semi-transparent line ---
         # Removed 'symbol' to get rid of individual points.
-        self.zero_curve = self.data_plot.plot(
+        self.trim_curve = self.data_plot.plot(
             [], [],
             pen=pg.mkPen(unsmoothed_color, width=1.5),
-            name="Zeroed"
+            name="Trimmed"
         )
 
-        # --- PLOT STYLE CHANGE: Smoothed curve is thicker and green ---
         self.smooth_curve = self.data_plot.plot(
             [], [],
-            pen=pg.mkPen(smoothed_color, width=2.5),
+            pen=pg.mkPen(smoothed_color, width=1.5),
             name="Smoothed"
         )
 
+        # --- PLOT STYLE CHANGE: Smoothed curve is thicker and green ---
+        self.zero_curve = self.data_plot.plot(
+            [], [],
+            pen=pg.mkPen(zeroed_color, width=2.5),
+            name="Zeroed"
+        )
+
         # --- Z-ORDERING: Explicitly set the smoothed curve to be on top ---
-        self.zero_curve.setZValue(0)  # Draw this curve first (in the back)
-        self.smooth_curve.setZValue(1)  # Draw this curve second (on top)
+        self.trim_curve.setZValue(0)  # Draw this curve first (in the back)
+        self.smooth_curve.setZValue(1)  # Draw this curve first (in the back)
+        self.zero_curve.setZValue(2)  # Draw this curve second (on top)
 
         # Labels are now bold
         self.data_plot.setLabel('left', "<b>Pressure [mmHg]</b>")
@@ -232,6 +241,11 @@ class PlotTab(QWidget):
         p = data.get('p', [])
         self.smooth_curve.setData(t, p)
 
+    def _update_trimmed_plot(self, data: dict):
+        t = [x / 60 for x in data.get('t', [])]
+        p = data.get('p', [])
+        self.trim_curve.setData(t, p)
+
     def _new_data_loaded(self, data):
         self.spin_start.setMaximum(self.pipeline.working_length-1)
         self.spin_start.setValue(0)
@@ -247,9 +261,10 @@ class PlotTab(QWidget):
         # self._update_smoothed_plot(smoothed_data)
 
     def _data_transformed(self, data: list):
-        zeroed_data, smoothed_data = data
+        trimmed_data, smoothed_data, zeroed_data = data
         self._update_zero_plot(zeroed_data)
         self._update_smoothed_plot(smoothed_data)
+        self._update_trimmed_plot(trimmed_data)
 
 
     def eventFilter(self, obj, event):

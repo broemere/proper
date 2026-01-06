@@ -1,6 +1,6 @@
 from statistics import mean, median
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d, median_filter
 import cv2
 from PySide6.QtGui import QImage, QPixmap
 from skimage.measure import label, regionprops_table
@@ -79,19 +79,49 @@ def smooth_data(data, method, r):
     elif method == "Double Min":
         first_smooth = [min(data["p"][i:min(i + r, n)]) for i in range(n)]
         new_p = [min(first_smooth[i:min(i + r, n)]) for i in range(n)]
+
+    # elif method == "Moving Avg":
+    #     half_window = r // 2
+    #     new_p = []
+    #     for i in range(n):
+    #         start = max(0, i - half_window)
+    #         end = min(n, i + half_window + 1)  # +1 because the slice end is exclusive
+    #         new_p.append(mean(data["p"][start:end]))
+    # elif method == "Median":
+    #     new_p = []
+    #     half_window = r // 2
+    #     for i in range(n):
+    #         start = max(0, i - half_window)
+    #         end = min(n, i + half_window + 1)
+    #         new_p.append(median(data["p"][start:end]))
+
+    # elif method == "Moving Avg":
+    #     # mode='nearest' repeats the edge value
+    #     # mode='mirror' reflects the data pattern at the edge
+    #     new_p = uniform_filter1d(data["p"], size=r, mode='nearest')
+    #
+    # elif method == "Median":
+    #     new_p = median_filter(data["p"], size=r, mode='nearest')
+
     elif method == "Moving Avg":
         half_window = r // 2
         new_p = []
         for i in range(n):
-            start = max(0, i - half_window)
-            end = min(n, i + half_window + 1)  # +1 because the slice end is exclusive
+            # Calculate how much space we have on left vs right
+            # and pick the smaller one to ensure symmetry.
+            w = min(half_window, i, n - 1 - i)
+            start = i - w
+            end = i + w + 1  # +1 for exclusive slice
             new_p.append(mean(data["p"][start:end]))
+
     elif method == "Median":
-        new_p = []
         half_window = r // 2
+        new_p = []
         for i in range(n):
-            start = max(0, i - half_window)
-            end = min(n, i + half_window + 1)
+            # symmetric logic
+            w = min(half_window, i, n - 1 - i)
+            start = i - w
+            end = i + w + 1
             new_p.append(median(data["p"][start:end]))
     elif method == "Gaussian":
         new_p = np.asarray(data["p"], dtype=float)
@@ -100,7 +130,7 @@ def smooth_data(data, method, r):
     else:
         #return ui.notify("SMOOTHING ERROR: INCORRECT METHOD")
         print("Smoothing Error")
-    return {"t": data["t"], "p": np.clip([round(x, 2) for x in new_p], 0, None)}
+    return {"t": data["t"], "p": new_p}
 
 
 def zero_data(data, method, r):
@@ -120,7 +150,7 @@ def zero_data(data, method, r):
         #return ui.notify("ZEROING ERROR: INCORRECT METHOD")
         print("Zeroing Error")
     new_p = [round(p - zero, 2) for p in data["p"]]
-    return {"t": data["t"], "p": new_p}
+    return {"t": data["t"], "p": np.clip([round(x, 2) for x in new_p], 0, None)}
 
 
 def numpy_to_qpixmap(numpy_array: np.ndarray) -> QPixmap:
