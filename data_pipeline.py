@@ -888,6 +888,15 @@ class DataPipeline(QObject):
         if self.conversion_factor == 0:
             return ERROR_CONTENT["no_conversion_factor"]
 
+        if len(self.area_data_left) < 5:
+            title, hint = ERROR_CONTENT["area_incomplete"]
+            return title, f"{hint}first frame."
+
+        if len(self.area_data_right) < 5:
+            title, hint = ERROR_CONTENT["area_incomplete"]
+            return title, f"{hint}last frame."
+
+        # Or keep a fallback if you want
         if len(self.area_data_left) + len(self.area_data_right) < 10:
             return ERROR_CONTENT["area_incomplete"]
 

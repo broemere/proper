@@ -197,7 +197,7 @@ class AnalysisSessionWidget(QWidget):
         base_name, _ = os.path.splitext(file_name)
 
         # Emit the signal to request the parent change the tab name
-        self.tab_name_requested.emit(base_name.strip("_video").strip("recording_").strip("_pressure"))
+        self.tab_name_requested.emit(base_name.removeprefix("recording_").removesuffix("_video").removesuffix("_pressure"))
 
     def on_video_file_selected(self, path: str):
         """Handles the selection of a video file for this session."""
