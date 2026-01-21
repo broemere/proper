@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://github.com/broemere/proper/blob/main/resources/icon_256.png?raw=true" alt="PROPER Logo">
+  <img src="https://github.com/broemere/proper/blob/main/resources/icon_128.png?raw=true" alt="PROPER Logo">
 </p>
 
 # PROPER
