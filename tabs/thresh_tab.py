@@ -77,8 +77,9 @@ class ThreshTab(QWidget):
         background_pixmap = self.frame_label1.pixmap()
         if background_pixmap:
             # Create and show the new window, passing the current image
-            self.canvas_window1 = CanvasWindow(background_pixmap)
+            self.canvas_window1 = CanvasWindow(background_pixmap, current_tool=self.pipeline.drawing_tool)
             self.canvas_window1.drawing_completed.connect(self._on_drawing1_completed)
+            self.canvas_window1.tool_toggled.connect(self.pipeline.set_drawing_tool)
             self.canvas_window1.show()
         else:
             log.warning("Frame 1 has no image data to draw on.")
@@ -88,8 +89,9 @@ class ThreshTab(QWidget):
         log.info("Draw button on Frame 2 clicked.")
         background_pixmap = self.frame_label2.pixmap()
         if background_pixmap:
-            self.canvas_window2 = CanvasWindow(background_pixmap)
+            self.canvas_window2 = CanvasWindow(background_pixmap, current_tool=self.pipeline.drawing_tool)
             self.canvas_window2.drawing_completed.connect(self._on_drawing2_completed)
+            self.canvas_window2.tool_toggled.connect(self.pipeline.set_drawing_tool)
             self.canvas_window2.show()
         else:
             log.warning("Frame 2 has no image data to draw on.")

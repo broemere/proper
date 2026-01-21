@@ -15,8 +15,9 @@ class CanvasWindow(QWidget):
     """
     # Signal to send the final image back when the user saves.
     drawing_completed = Signal(np.ndarray)
+    tool_toggled = Signal(str)  # notify parent of tool change
 
-    def __init__(self, background_pixmap: QPixmap, parent=None):
+    def __init__(self, background_pixmap: QPixmap, current_tool='lasso', parent=None):
         """
         Initializes the window with a base image to draw on.
 
@@ -36,6 +37,9 @@ class CanvasWindow(QWidget):
 
         # Load the provided pixmap into the canvas.
         self.polygon_canvas.set_pixmap(background_pixmap)
+
+        self.polygon_canvas.set_tool(current_tool)
+        self.set_active_tool(current_tool)
 
 
 
@@ -64,8 +68,10 @@ class CanvasWindow(QWidget):
 
         self.tool_btn = QPushButton("Lasso [T]")
         self.tool_btn.setToolTip("Change drawing tool (T)")
-        self.tool_btn.clicked.connect(self._toggle_tool)
-        self.polygon_canvas.tool_changed.connect(self._toggle_tool)
+        #self.tool_btn.clicked.connect(self._toggle_tool)
+        self.tool_btn.clicked.connect(self._on_button_toggle)
+        #self.polygon_canvas.tool_changed.connect(self._toggle_tool)
+        self.polygon_canvas.tool_changed.connect(self.set_active_tool)
         ctrl_row.addWidget(self.tool_btn)
 
         self.color_btn = QPushButton()
@@ -97,6 +103,30 @@ class CanvasWindow(QWidget):
         # Set initial state for buttons
         self._update_color_button(self.polygon_canvas.final_color)
         self.tool_btn.setText(self.polygon_canvas.current_tool.title() + " [T]")
+
+    def _on_button_toggle(self):
+        """
+        Calculates the opposite tool and calls the setter.
+        Only attached to the UI Button click.
+        """
+        current = self.polygon_canvas.current_tool
+        new_tool = 'polygon' if current == 'lasso' else 'lasso'
+        self.set_active_tool(new_tool)
+
+    def set_active_tool(self, tool_name: str):
+        """
+        The Single Source of Truth.
+        Updates Canvas (Logic), Button (UI), and emits Signal (Persistence).
+        """
+        # 1. Update the Canvas Logic
+        # (This updates the internal state of PolygonCanvas but does NOT emit a signal, preventing loops)
+        self.polygon_canvas.set_tool(tool_name)
+
+        # 2. Update the UI Visuals
+        self.tool_btn.setText(tool_name.title() + " [T]")
+
+        # 3. Notify the Parent (LevelTab) so it can save to Pipeline/QSettings
+        self.tool_toggled.emit(tool_name)
 
     def _toggle_tool(self):
         """Switches between 'polygon' and 'lasso' tools."""

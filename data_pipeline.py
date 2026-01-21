@@ -19,6 +19,7 @@ class DataPipeline(QObject):
     # --- SIGNALS ---
 
     state_loaded = Signal()
+    drawing_tool_changed = Signal(str)
 
     # Scale inputs
     known_length_changed = Signal(float)
@@ -117,6 +118,14 @@ class DataPipeline(QObject):
         # EXPORT TAB
         self.n_ellipses = 0
 
+        self.drawing_tool = 'lasso'
+
+
+    def set_drawing_tool(self, tool_name: str):
+        """Sets the tool and emits signal only if changed."""
+        if tool_name in ['lasso', 'polygon'] and self.drawing_tool != tool_name:
+            self.drawing_tool = tool_name
+            self.drawing_tool_changed.emit(tool_name)
 
     def register_observer(self, key: str, callback):
         """Register a callback to be invoked when the given key changes."""

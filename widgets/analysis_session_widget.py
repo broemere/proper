@@ -152,6 +152,7 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.manual_conversion_factor_changed.connect(self._save_manual_conversion_factor)
         self.pipeline.final_pressure_changed.connect(self._save_final_pressure)
         self.pipeline.n_ellipses_changed.connect(self._save_n_ellipses)
+        self.pipeline.drawing_tool_changed.connect(self._save_drawing_tool)
 
     def _load_settings_into_pipeline(self):
         """Reads values from QSettings and populates the pipeline."""
@@ -168,6 +169,8 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.set_final_pressure(final_pressure)
         n_ellipses_index = self.settings.value("export/n_ellipses", defaultValue=3, type=int)
         self.pipeline.set_n_ellipses(n_ellipses_index + 1)
+        saved_tool = self.settings.value("drawing/tool", defaultValue="lasso", type=str)
+        self.pipeline.set_drawing_tool(saved_tool)
 
     @Slot(str)
     def on_file_selected(self, path: str):
@@ -241,3 +244,7 @@ class AnalysisSessionWidget(QWidget):
         """Saves the number of ellipses (as an index) to settings."""
         # Convert the value (1-4) back to an index (0-3) for saving
         self.settings.setValue("export/n_ellipses", n_ellipses - 1)
+
+    @Slot(str)
+    def _save_drawing_tool(self, drawing_tool: str):
+        self.settings.setValue("drawing/tool", drawing_tool)

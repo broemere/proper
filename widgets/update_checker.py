@@ -1,7 +1,10 @@
+import certifi
+import ssl
 import logging
 import urllib.request
 from PySide6.QtCore import QThread, Signal
 from config import APP_VERSION, REPO_URL
+
 
 log = logging.getLogger(__name__)
 
@@ -15,9 +18,10 @@ class UpdateChecker(QThread):
 
     def run(self):
         try:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
             # We use urllib to avoid adding an external dependency like 'requests'
             # The timeout ensures we don't hang indefinitely if the internet is flaky
-            with urllib.request.urlopen(REPO_URL, timeout=5) as response:
+            with urllib.request.urlopen(REPO_URL, context=ssl_context, timeout=5) as response:
                 # GitHub redirects 'latest' to the specific tag URL.
                 # Example: .../releases/tag/v0.1
                 final_url = response.geturl()
