@@ -5,7 +5,7 @@
 <h3 align="center">PROPER</h3>
 
 <p align="center">
-  Fast data analysis application customized for PRIM data.
+  Fast data analysis app custom-made for PRIM data.
   <br>
   <br>
   <a href="https://pubmed.ncbi.nlm.nih.gov/37249760/">PRIM Device</a>
@@ -14,14 +14,11 @@
 </p>
 
 
-# PROPER
+## PROPER
 Python Reconstruction Of PRIM Experiment Recording
 
-A GUI for performing mechanical analyses of PRIM experimental data.
+A cross-platform application for performing mechanical analyses of PRIM experimental data. Developed with research scientists. Vastly shortens data analysis time, and reduces human errors.
 
-Developed with research scientists. Vastly shortens data analysis time, and reduces human errors.
-
----
 
 ## Features
 
