@@ -1,7 +1,18 @@
-
 <p align="center">
   <img src="https://github.com/broemere/proper/blob/main/resources/icon_128.png?raw=true" alt="PROPER Logo">
 </p>
+
+<h3 align="center">PROPER</h3>
+
+<p align="center">
+  Fast data analysis application customized for PRIM data.
+  <br>
+  <br>
+  <a href="https://pubmed.ncbi.nlm.nih.gov/37249760/">PRIM Device</a>
+  -
+  <a href="http://www.tykocki-lab.com/">Tykocki Lab</a>
+</p>
+
 
 # PROPER
 Python Reconstruction Of PRIM Experiment Recording
