@@ -1,7 +1,7 @@
 
-<div style="text-align: center;">
-  <img src="https://github.com/broemere/proper/blob/main/resources/icon_256.png?raw=true" alt="PROPER Logo"/>
-</div>
+<p align="center">
+  <img src="https://github.com/broemere/proper/blob/main/resources/icon_256.png?raw=true" alt="PROPER Logo">
+</p>
 
 # PROPER
 Python Reconstruction Of PRIM Experiment Recording
