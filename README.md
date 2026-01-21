@@ -1,6 +1,6 @@
 
 <div style="text-align: center;">
-  ![PROPER Logo](resources/icon_256.png)
+  <img src="https://github.com/broemere/proper/blob/main/resources/icon_256.png?raw=true" alt="PROPER Logo"/>
 </div>
 
 # PROPER
