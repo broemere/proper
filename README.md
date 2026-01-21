@@ -1,3 +1,8 @@
+
+<div style="text-align: center;">
+  ![PROPER Logo](resources/icon_256.png)
+</div>
+
 # PROPER
 Python Reconstruction Of PRIM Experiment Recording
 
