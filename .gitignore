@@ -12,4 +12,4 @@ resources/*
 !resources/app.icns
 !resources/zoom.png
 !resources/scale.png
-!resources/icon_256.png
+!resources/icon_128.png
