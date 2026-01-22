@@ -47,7 +47,7 @@ class AnalysisSessionWidget(QWidget):
         self.init_ui()
         self.connect_signals()
         QApplication.instance().installEventFilter(self)
-        self.pipeline.register_observer("author", self.tab_author.setText)
+        #self.pipeline.register_observer("author", self.tab_author.setText)
         self._load_settings_into_pipeline() # ⚙️ Load settings on startup
         log.info("AnalysisSessionWidget created.")
 

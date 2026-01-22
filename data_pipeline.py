@@ -21,6 +21,12 @@ class DataPipeline(QObject):
 
     state_loaded = Signal()
     drawing_tool_changed = Signal(str)
+    author_recieved = Signal(str)
+
+    # Plotting
+    new_data = Signal()
+    transformed_data = Signal(list)
+    trimming_data = Signal()
 
     # Scale inputs
     known_length_changed = Signal(float)
@@ -134,11 +140,6 @@ class DataPipeline(QObject):
             self._observers[key] = []
         self._observers[key].append(callback)
 
-    def notify_observers(self, key: str, value):
-        """Notify all observers that a particular key has changed."""
-        for callback in self._observers.get(key, []):
-            callback(value)
-
     def update_pipeline(self):
         """
         Run the entire pipeline: apply trimming, then smoothing, then zeroing.
@@ -158,7 +159,8 @@ class DataPipeline(QObject):
             # 3. Apply smoothing on the trimmed data.
             self.zeroed_data = zero_data(self.smoothed_data, self.zeroing_method, self.zeroing_window + 1)
             self.data_version += 1
-            self.notify_observers('transformed', [self.trimmed_data, self.smoothed_data,self.zeroed_data])
+            #self.notify_observers('transformed', [self.trimmed_data, self.smoothed_data,self.zeroed_data])
+            self.transformed_data.emit([self.trimmed_data, self.smoothed_data,self.zeroed_data])
             print("Points plotted:", len(self.zeroed_data["p"]))
 
     def load_csv_file(self, file_path: str):
@@ -170,7 +172,7 @@ class DataPipeline(QObject):
         print(os.path.splitext(os.path.basename(self.csv_path))[0])
         self.raw_data = load_csv(file_path)
         #self.set_trimming(0, self.working_length-1)
-        self.notify_observers('raw', None)
+        self.new_data.emit()
         log.info("Finding initial keypoints based on default pressures.")
         self.update_pipeline()
         self.find_and_set_keypoint_by_pressure('left', self.initial_pressure)
@@ -189,7 +191,8 @@ class DataPipeline(QObject):
         self.trim_stop = max(self.trim_start, min(stop, valid_max))
         self.update_pipeline()
         log.info(("TRIM VALUES", self.trim_start, self.trim_stop))
-        self.notify_observers('trimming', (self.trim_start, self.trim_stop))
+        #self.notify_observers('trimming', (self.trim_start, self.trim_stop))
+        self.trimming_data.emit()
 
     def set_zeroing(self, method: str, window: int):
         self.zeroing_method = method
@@ -322,7 +325,7 @@ class DataPipeline(QObject):
             print("--- Debug Check Complete ---\n")
 
         log.info(f"Analysis state compiled")
-        self.notify_observers('state_dict', state)
+        #self.notify_observers('state_dict', state)
 
         print("\n--- JSON Size Analysis (per key) ---")
         sizes = {}
@@ -376,17 +379,18 @@ class DataPipeline(QObject):
     def refresh_session(self):
         self.update_pipeline()
         print("Plot data restored")
-        self.notify_observers('conversion_factor', self.conversion_factor)
-        self.notify_observers('author', self.author)
+        #self.notify_observers('conversion_factor', self.conversion_factor)
+        #self.notify_observers('author', self.author)
+        self.author_recieved.emit(self.author)
         #self.notify_observers('left_image', self.left_image) # Scale, frame
         self.left_image_changed.emit(self.left_image)
-        self.notify_observers('right_image', self.right_image) # Frame, Thickness
+        #self.notify_observers('right_image', self.right_image) # Frame, Thickness
         self.level_update()
         self.segment_image(self.left_threshed, "left")
         self.segment_image(self.right_threshed, "right")
         self.left_threshed_old = self.left_threshed.copy()
         self.right_threshed_old = self.right_threshed.copy()
-        self.notify_observers('state_loaded', "") # Final notification that the pipeline has had its state reloaded
+        #self.notify_observers('state_loaded', "") # Final notification that the pipeline has had its state reloaded
 
     def on_author_changed(self, new_author):
         self.author = new_author

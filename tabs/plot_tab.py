@@ -13,10 +13,11 @@ class PlotTab(QWidget):
         self.pipeline = pipeline
         self._is_state_synced = False
         self.init_ui()
-        self.pipeline.register_observer("raw", self._new_data_loaded)
-        self.pipeline.register_observer("transformed", self._data_transformed)
-        self.pipeline.register_observer("state_loaded", self._on_state_loaded)
-        self.pipeline.register_observer("trimming", self._sync_ui_to_pipeline)
+        self.connect_signals()
+
+        #self.pipeline.register_observer("raw", self._new_data_loaded)
+        #self.pipeline.register_observer("transformed", self._data_transformed)
+        #self.pipeline.register_observer("trimming", self._sync_ui_to_pipeline)
 
     def init_ui(self):
         # --- AESTHETIC TWEAK: Enable antialiasing for smoother lines ---
@@ -129,6 +130,12 @@ class PlotTab(QWidget):
 
         self._hover_source = None
         self._hover_region = None
+
+    def connect_signals(self):
+        self.pipeline.new_data.connect(self._new_data_loaded)
+        self.pipeline.transformed_data.connect(self._data_transformed)
+        self.pipeline.trimming_data.connect(self._sync_ui_to_pipeline)
+
 
     def showEvent(self, event: QEvent):
         """This Qt event fires every time the widget is shown."""
@@ -246,7 +253,7 @@ class PlotTab(QWidget):
         p = data.get('p', [])
         self.trim_curve.setData(t, p)
 
-    def _new_data_loaded(self, data):
+    def _new_data_loaded(self):
         self.spin_start.setMaximum(self.pipeline.working_length-1)
         self.spin_start.setValue(0)
         self.spin_stop.setMaximum(self.pipeline.working_length-1)
