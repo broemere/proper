@@ -22,51 +22,27 @@ A cross-platform application for performing mechanical analyses of PRIM experime
 
 ## Features
 
-* Pressure-time data visualization with trimming, smoothing, and zeroing functions
-* Pixel-to-mm scaling
-* Easy keyframe location (start and end) via pressure (e.g., 0 and 25 mmHg)
-* Image brightness, contrast, and thresholding controls
-* Robust image painting tools for cleaning up noise and voids
-* Automatic area calculation of segmented objects
-* User-friendly thickness measuring tool
-* Smoothing filter for improved derivative calculations
-* Complete data analysis export to csv:
-  * Frame number
-  * Time
-  * Pressure
-  * Wall Thickness
-  * Mid-wall diameter
-  * Inner volume
-  * Stretch
-  * Stress
-  * Stress-stretch average at each 2mmHg pressure intervals
-    * Allows for easy comparison across subjects at the same pressures
-  * Stiffness calculation at each 5mmHg pressure interval
-    * Derivative of forced-continuous smoothing filter at pressure of interest
-    * Stress-stretch values nearest to each 5mmHg pressure
+* Paired image and sensor data processing
+* Time series visualization and transform tools
+* Image manipulation tools (painting, brightness, contrast, threshold)
+* Automatic geometric and mechanical calculations
+* Sandboxed analysis sessions with multitasking
+* Session saving and data export to csv
+* Threading heavy IO/CPU tasks for responsive UI
+
+
+## Quick Start
+
+### Desktop Application
+
+Download and run the latest exe/dmg from https://github.com/broemere/proper/releases
+
+
+>*Note: Windows may block the program on the first run.*
+>
+>`"Windows protected your PC"` → `More info` → `Run anyway`
 
 ---
-
-## Requirements
-
-### Running app
-
-* Windows
-* Mac
-
-### Building app
-
-* **Python 3.11+** with packages in `requirements.txt`
-
----
-
-## Installation
-
-### Direct run
-
-* Download and run the exe/dmg from https://github.com/broemere/proper/releases
-* Your OS may block the program the first time it is run.
-  `"Windows protected your PC` → `More info` → `Run anyway`
 
 ### Building from source code
 
@@ -99,7 +75,18 @@ or
     Run ```proper_<version>.exe``` in ```/dist```
     * This executable is fully self-contained, can be copied/moved, and no longer requires the source code or build environment.
 
----
+
+## Requirements
+
+### Running app
+
+* Windows
+* Mac
+
+### Building app
+
+* **Python 3.11+** with packages in `requirements.txt`
+
 
 ## Usage
 
@@ -130,8 +117,20 @@ or
     * Click `?` for further detailed instructions.
     * This smoothed spline is NOT exported with the final data. It is only used for improved stiffness calculations.
 13. **Export results** to a CSV file in the same location as the original data.
+    * Frame number
+    * Time
+    * Pressure
+    * Wall Thickness
+    * Mid-wall diameter
+    * Inner volume
+    * Stretch
+    * Stress
+    * Stress-stretch average at each 2mmHg pressure intervals
+      * Allows for easy comparison across subjects at the same pressures
+    * Stiffness calculation at each 5mmHg pressure interval
+      * Derivative of forced-continuous smoothing filter at pressure of interest
+      * Stress-stretch values nearest to each 5mmHg pressure
 
----
 
 ## Data manipulation
 
@@ -200,7 +199,6 @@ The trade-off of this data analysis tool being user-friendly is that it also obs
 * v_wall: Elliptical wall volume [mm<sup>3</sup>]
   * Calculated above
 
----
 
 ## License
 

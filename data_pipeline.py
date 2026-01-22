@@ -1,5 +1,5 @@
 from logging import ERROR
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, SignalInstance
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
 from collections import OrderedDict
@@ -12,6 +12,7 @@ from pathlib import Path
 from scipy.interpolate import UnivariateSpline
 from widgets.error_bus import user_error
 from widgets.user_messages import ERROR_CONTENT
+import cv2
 
 log = logging.getLogger(__name__)
 
@@ -261,21 +262,45 @@ class DataPipeline(QObject):
         This method handles the conversion of non-serializable objects (like QPointF)
         into a format that can be pickled.
         """
-        # Start with a dictionary of all of the object's attributes
+        # Start with a dictionary of all of the pipeline data
         state = vars(self).copy()
 
-        # --- Data Conversion and Exclusion ---
-        # 1. Exclude any attributes that cannot or should not be saved.
-        state.pop('task_manager', None)
-        state.pop('_observers', None)
-        state.pop('left_leveled', None)
-        state.pop('right_leveled', None)
-        state.pop('left_threshed', None)
-        state.pop('right_threshed', None)
-        state.pop('left_threshed_old', None)
-        state.pop('right_threshed_old', None)
+        # --- 1. Dynamic Filtering ---
+        keys_to_remove = []
+        for key, value in state.items():
+            # Filter out PySide Signals
+            if isinstance(value, SignalInstance):
+                keys_to_remove.append(key)
+                continue
 
-        # 2. Convert any non-serializable objects into a savable format.
+            # Filter out Qt Internals (like __METAOBJECT__)
+            if key.startswith('__') or "PyCapsule" in str(type(value)):
+                keys_to_remove.append(key)
+                continue
+
+            # Filter out Scipy Splines (checking type string avoids needing to import scipy here)
+            if "scipy" in str(type(value)) and "Spline" in str(type(value)):
+                keys_to_remove.append(key)
+                continue
+
+        # Remove the dynamically identified keys
+        for key in keys_to_remove:
+            state.pop(key, None)
+
+        # --- 2. Manual Exclusions ---
+        # Explicitly remove large or runtime-only objects
+        keys_to_exclude = [
+            'task_manager', '_observers',
+            'left_leveled', 'right_leveled',
+            'left_threshed', 'right_threshed',
+            'left_threshed_old', 'right_threshed_old',
+            'objectNameChanged'  # Sometimes appears as a string/internal in Qt
+        ]
+
+        for k in keys_to_exclude:
+            state.pop(k, None)
+
+        # 3. Convert any non-serializable objects into a savable format.
         # Here, we convert the list of QPointF objects into a list of tuples.
         #if 'key_locations' in state and state['key_locations']:
             # This list comprehension creates a new list of simple (x, y) tuples
@@ -930,6 +955,7 @@ class DataPipeline(QObject):
             return None
 
         try:
+            self.s_value = s_value
             spline = UnivariateSpline(self.stretch, self.stress, s=s_value)
             self.p_spline = spline  # Store the spline object
             return spline(self.stretch) # Return the calculated Y-values
