@@ -179,7 +179,7 @@ class FrameTab(QWidget):
 
 
     @Slot()
-    def _on_state_loaded(self, _):
+    def _on_state_loaded(self):
         """Slot for the 'state_loaded' signal. Marks the UI as dirty."""
         log.info("Received 'state_loaded' notification.")
         self._is_state_synced = False

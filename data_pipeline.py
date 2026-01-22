@@ -1,5 +1,7 @@
 from logging import ERROR
 from PySide6.QtCore import QObject, Signal, SignalInstance
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
 from collections import OrderedDict
@@ -27,6 +29,10 @@ class DataPipeline(QObject):
     new_data = Signal()
     transformed_data = Signal(list)
     trimming_data = Signal()
+    zero_method_changed = Signal(str)
+    zero_window_changed = Signal(int)
+    smooth_method_changed = Signal(str)
+    smooth_window_changed = Signal(int)
 
     # Scale inputs
     known_length_changed = Signal(float)
@@ -85,7 +91,6 @@ class DataPipeline(QObject):
         self.zeroing_window = 7
         self.trim_start = 0
         self.trim_stop = 42
-        self._observers = {}
         self.task_manager = None
         self.VERSION = APP_VERSION
         self.data_version = 0
@@ -134,12 +139,6 @@ class DataPipeline(QObject):
             self.drawing_tool = tool_name
             self.drawing_tool_changed.emit(tool_name)
 
-    def register_observer(self, key: str, callback):
-        """Register a callback to be invoked when the given key changes."""
-        if key not in self._observers:
-            self._observers[key] = []
-        self._observers[key].append(callback)
-
     def update_pipeline(self):
         """
         Run the entire pipeline: apply trimming, then smoothing, then zeroing.
@@ -159,7 +158,6 @@ class DataPipeline(QObject):
             # 3. Apply smoothing on the trimmed data.
             self.zeroed_data = zero_data(self.smoothed_data, self.zeroing_method, self.zeroing_window + 1)
             self.data_version += 1
-            #self.notify_observers('transformed', [self.trimmed_data, self.smoothed_data,self.zeroed_data])
             self.transformed_data.emit([self.trimmed_data, self.smoothed_data,self.zeroed_data])
             print("Points plotted:", len(self.zeroed_data["p"]))
 
@@ -191,17 +189,20 @@ class DataPipeline(QObject):
         self.trim_stop = max(self.trim_start, min(stop, valid_max))
         self.update_pipeline()
         log.info(("TRIM VALUES", self.trim_start, self.trim_stop))
-        #self.notify_observers('trimming', (self.trim_start, self.trim_stop))
         self.trimming_data.emit()
 
     def set_zeroing(self, method: str, window: int):
         self.zeroing_method = method
         self.zeroing_window = window
+        self.zero_method_changed.emit(method)
+        self.zero_window_changed.emit(window)
         self.update_pipeline()
 
     def set_smoothing(self, method: str, window: int):
         self.smoothing_method = method
         self.smoothing_window = window
+        self.smooth_method_changed.emit(method)
+        self.smooth_window_changed.emit(window)
         self.update_pipeline()
 
     def get_data(self, data_version: str):
@@ -293,7 +294,7 @@ class DataPipeline(QObject):
         # --- 2. Manual Exclusions ---
         # Explicitly remove large or runtime-only objects
         keys_to_exclude = [
-            'task_manager', '_observers',
+            'task_manager',
             'left_leveled', 'right_leveled',
             'left_threshed', 'right_threshed',
             'left_threshed_old', 'right_threshed_old',
@@ -325,7 +326,6 @@ class DataPipeline(QObject):
             print("--- Debug Check Complete ---\n")
 
         log.info(f"Analysis state compiled")
-        #self.notify_observers('state_dict', state)
 
         print("\n--- JSON Size Analysis (per key) ---")
         sizes = {}
@@ -379,23 +379,25 @@ class DataPipeline(QObject):
     def refresh_session(self):
         self.update_pipeline()
         print("Plot data restored")
-        #self.notify_observers('conversion_factor', self.conversion_factor)
-        #self.notify_observers('author', self.author)
         self.author_recieved.emit(self.author)
-        #self.notify_observers('left_image', self.left_image) # Scale, frame
         self.left_image_changed.emit(self.left_image)
-        #self.notify_observers('right_image', self.right_image) # Frame, Thickness
         self.level_update()
         self.segment_image(self.left_threshed, "left")
         self.segment_image(self.right_threshed, "right")
         self.left_threshed_old = self.left_threshed.copy()
         self.right_threshed_old = self.right_threshed.copy()
-        #self.notify_observers('state_loaded', "") # Final notification that the pipeline has had its state reloaded
+        self._recalculate_conversion_factor()
+
 
     def on_author_changed(self, new_author):
         self.author = new_author
         log.info(f"User: {self.author}")
 
+    def _bg_color(self) -> str:
+        return QApplication.instance().palette().color(QPalette.Window).name()
+
+    def _fg_color(self) -> str:
+        return QApplication.instance().palette().color(QPalette.WindowText).name()
 
 
     ### SCALE TAB

@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt, QEvent, Slot
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QApplication
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox
+from PySide6.QtGui import QColor
 import pyqtgraph as pg
 from data_pipeline import DataPipeline
 import logging
@@ -15,61 +15,28 @@ class PlotTab(QWidget):
         self.init_ui()
         self.connect_signals()
 
-        #self.pipeline.register_observer("raw", self._new_data_loaded)
-        #self.pipeline.register_observer("transformed", self._data_transformed)
-        #self.pipeline.register_observer("trimming", self._sync_ui_to_pipeline)
-
     def init_ui(self):
-        # --- AESTHETIC TWEAK: Enable antialiasing for smoother lines ---
-        pg.setConfigOptions(antialias=True)
-
         tab_layout = QVBoxLayout(self)
 
-        # Transformed Data Plot
-        self.data_plot = self._create_plot_widget("<b>Trimmed and Final Data</b>")  # Title is now bold
-        self.data_plot.addLegend()
-
-        # --- AESTHETIC TWEAK: Define new colors for clarity ---
-        # A vibrant green for the main (smoothed) curve
-        zeroed_color = QColor("#16A085")  # A nice green shade
-        # A semi-transparent version of the foreground color for the background curve
-        unsmoothed_color = QColor(self._fg_color())
-        unsmoothed_color.setAlpha(100)  # Makes it less prominent
-        smoothed_color = QColor(self._fg_color())
-        smoothed_color.setAlpha(200)  # Makes it less prominent
-
-        # --- PLOT STYLE CHANGE: Unsmoothed curve is now a thin, semi-transparent line ---
-        # Removed 'symbol' to get rid of individual points.
-        self.trim_curve = self.data_plot.plot(
-            [], [],
-            pen=pg.mkPen(unsmoothed_color, width=1.5),
-            name="Trimmed"
-        )
-
-        self.smooth_curve = self.data_plot.plot(
-            [], [],
-            pen=pg.mkPen(smoothed_color, width=1.5),
-            name="Smoothed"
-        )
-
-        # --- PLOT STYLE CHANGE: Smoothed curve is thicker and green ---
-        self.zero_curve = self.data_plot.plot(
-            [], [],
-            pen=pg.mkPen(zeroed_color, width=2.5),
-            name="Zeroed"
-        )
-
-        # --- Z-ORDERING: Explicitly set the smoothed curve to be on top ---
-        self.trim_curve.setZValue(0)  # Draw this curve first (in the back)
-        self.smooth_curve.setZValue(1)  # Draw this curve first (in the back)
-        self.zero_curve.setZValue(2)  # Draw this curve second (on top)
-
-        # Labels are now bold
+        self.data_plot = self._create_plot_widget("<b>Trimmed and Transformed Data</b>")
         self.data_plot.setLabel('left', "<b>Pressure [mmHg]</b>")
         self.data_plot.setLabel('bottom', "<b>Time [min]</b>")
+        self.data_plot.addLegend()
+        zeroed_color = QColor("#16A085")  # A nice green shade
+        unsmoothed_color = QColor(self.pipeline._fg_color())
+        unsmoothed_color.setAlpha(100)  # semi-transparent foreground color for the background curves
+        smoothed_color = QColor(self.pipeline._fg_color())
+        smoothed_color.setAlpha(200)  # Makes it less prominent
+        pg.setConfigOptions(antialias=True)
+
+        self.trim_curve = self.data_plot.plot([], [], pen=pg.mkPen(unsmoothed_color, width=1.5), name="Trimmed")
+        self.smooth_curve = self.data_plot.plot([], [], pen=pg.mkPen(smoothed_color, width=1.5), name="Smoothed")
+        self.zero_curve = self.data_plot.plot([], [],pen=pg.mkPen(zeroed_color, width=2.5), name="Zeroed")
+        self.trim_curve.setZValue(0)  # Draw this curve first (in the back)
+        self.smooth_curve.setZValue(1)  # Draw this curve next
+        self.zero_curve.setZValue(2)  # Draw this curve last (on top)
         tab_layout.addWidget(self.data_plot)
 
-        # --- Controls centered below charts ---
         controls_widget = QWidget()
         controls_layout = QVBoxLayout(controls_widget)
         controls_layout.setAlignment(Qt.AlignCenter)
@@ -80,8 +47,7 @@ class PlotTab(QWidget):
         trim_layout.addWidget(QLabel('Trim Data:'))
         self.spin_start = QSpinBox(minimum=1)
         self.spin_stop = QSpinBox(minimum=1)
-        # Initialize limits after loading data
-        self.spin_start.valueChanged.connect(self._apply_trim)
+        self.spin_start.valueChanged.connect(self._apply_trim)  # Initialize limits after loading data
         self.spin_stop.valueChanged.connect(self._apply_trim)
         trim_layout.addWidget(QLabel('Start'))
         trim_layout.addWidget(self.spin_start)
@@ -135,7 +101,7 @@ class PlotTab(QWidget):
         self.pipeline.new_data.connect(self._new_data_loaded)
         self.pipeline.transformed_data.connect(self._data_transformed)
         self.pipeline.trimming_data.connect(self._sync_ui_to_pipeline)
-
+        self.pipeline.state_loaded.connect(self._on_state_loaded)
 
     def showEvent(self, event: QEvent):
         """This Qt event fires every time the widget is shown."""
@@ -146,7 +112,7 @@ class PlotTab(QWidget):
             self._sync_ui_to_pipeline()
 
     @Slot()
-    def _on_state_loaded(self, _):
+    def _on_state_loaded(self):
         """
         Slot for the 'state_loaded' signal from the pipeline.
         Marks the UI as dirty and triggers a sync if the tab is already visible.
@@ -185,11 +151,9 @@ class PlotTab(QWidget):
             self.cb_smooth.setCurrentText(self.pipeline.smoothing_method)
             self.spin_smooth_window.setValue(self.pipeline.smoothing_window)
 
-            # Mark the UI as being in sync with the state
             self._is_state_synced = True
 
         finally:
-            # Always unblock signals
             self.spin_start.blockSignals(False)
             self.spin_stop.blockSignals(False)
             self.cb_zero.blockSignals(False)
@@ -199,23 +163,16 @@ class PlotTab(QWidget):
 
     def _create_plot_widget(self, title: str) -> pg.PlotWidget:
         """Helper to create a theme-aware plot with zero lines"""
-        plot = pg.PlotWidget(title=title, color=self._fg_color(), size='12pt')
-        plot.setBackground(self._bg_color())
-        # Configure axes
-        for axis in ('bottom', 'left'):
+        plot = pg.PlotWidget(title=title, color=self.pipeline._fg_color(), size='12pt')
+        plot.setBackground(self.pipeline._bg_color())
+        for axis in ('bottom', 'left'):  # Configure axes
             ax = plot.getAxis(axis)
-            ax.setPen(pg.mkPen(self._fg_color()))
-            ax.setTextPen(self._fg_color())
+            ax.setPen(pg.mkPen(self.pipeline._fg_color()))
+            ax.setTextPen(self.pipeline._fg_color())
         # Zero lines
-        plot.addItem(pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen(color=self._fg_color(), style=Qt.DotLine)))
-        plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen(color=self._fg_color(), style=Qt.DotLine)))
+        plot.addItem(pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen(color=self.pipeline._fg_color(), style=Qt.DotLine)))
+        plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen(color=self.pipeline._fg_color(), style=Qt.DotLine)))
         return plot
-
-    def _bg_color(self) -> str:
-        return QApplication.instance().palette().color(QPalette.Window).name()
-
-    def _fg_color(self) -> str:
-        return QApplication.instance().palette().color(QPalette.WindowText).name()
 
     def _reset_trim(self):
         self.spin_start.setValue(0)
@@ -258,21 +215,13 @@ class PlotTab(QWidget):
         self.spin_start.setValue(0)
         self.spin_stop.setMaximum(self.pipeline.working_length-1)
         self.spin_stop.setValue(self.pipeline.working_length-1)
-        log.info("new data")
-        #self._apply_trim()
-        # self._apply_zeroing()
-        # zeroed_data = self.pipeline.get_data("zeroed")
-        # self._update_zero_plot(zeroed_data)
-        # self._apply_smoothing()
-        # smoothed_data = self.pipeline.get_data("smoothed")
-        # self._update_smoothed_plot(smoothed_data)
+        log.info("New data")
 
     def _data_transformed(self, data: list):
         trimmed_data, smoothed_data, zeroed_data = data
         self._update_zero_plot(zeroed_data)
         self._update_smoothed_plot(smoothed_data)
         self._update_trimmed_plot(trimmed_data)
-
 
     def eventFilter(self, obj, event):
         smooth = getattr(self, 'spin_smooth_window', None)
@@ -297,7 +246,7 @@ class PlotTab(QWidget):
             window = self.spin_zero_window.value()
         else:
             return
-        color = QColor(self._fg_color())
+        color = QColor(self.pipeline._fg_color())
         color.setAlpha(50)
 
         t = self.pipeline.zeroed_data.get('t', [])

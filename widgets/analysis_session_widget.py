@@ -145,14 +145,26 @@ class AnalysisSessionWidget(QWidget):
 
     def connect_signals(self):
         """Connects signals from widgets to the appropriate slots in this session."""
+        # Plot
         self.file_pickers.csv_selected.connect(self.on_file_selected)
         self.file_pickers.video_selected.connect(self.on_file_selected)
+        self.pipeline.zero_method_changed.connect(self._save_zero_method)
+        self.pipeline.zero_window_changed.connect(self._save_zero_window)
+        self.pipeline.smooth_method_changed.connect(self._save_smooth_method)
+        self.pipeline.smooth_window_changed.connect(self._save_smooth_window)
+
+        # Scale
         self.pipeline.known_length_changed.connect(self._save_known_length)
         self.pipeline.scale_is_manual_changed.connect(self._save_scale_is_manual)
         self.pipeline.manual_conversion_factor_changed.connect(self._save_manual_conversion_factor)
+
+        # Picker
         self.pipeline.final_pressure_changed.connect(self._save_final_pressure)
+
+        # Export
         self.pipeline.n_ellipses_changed.connect(self._save_n_ellipses)
         self.pipeline.drawing_tool_changed.connect(self._save_drawing_tool)
+        self.pipeline.author_recieved.connect(self.tab_author.setText)
 
     def _load_settings_into_pipeline(self):
         """Reads values from QSettings and populates the pipeline."""
@@ -171,6 +183,15 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.set_n_ellipses(n_ellipses_index + 1)
         saved_tool = self.settings.value("drawing/tool", defaultValue="lasso", type=str)
         self.pipeline.set_drawing_tool(saved_tool)
+
+        # Plot settings
+        self.pipeline.zeroing_method = self.settings.value("plot/zero_method", defaultValue="Min", type=str)
+        self.pipeline.zeroing_window = self.settings.value("plot/zero_window", defaultValue=7, type=int)
+        self.pipeline.smoothing_method = self.settings.value("plot/smooth_method", defaultValue="Double Min", type=str)
+        self.pipeline.smoothing_window = self.settings.value("plot/smooth_window", defaultValue=100, type=int)
+
+        self.pipeline.state_loaded.emit()  # trigger sync
+
 
     @Slot(str)
     def on_file_selected(self, path: str):
@@ -248,3 +269,19 @@ class AnalysisSessionWidget(QWidget):
     @Slot(str)
     def _save_drawing_tool(self, drawing_tool: str):
         self.settings.setValue("drawing/tool", drawing_tool)
+
+    @Slot(str)
+    def _save_zero_method(self, zero_method: str):
+        self.settings.setValue("plot/zero_method", zero_method)
+
+    @Slot(str)
+    def _save_zero_window(self, zero_window: int):
+        self.settings.setValue("plot/zero_window", zero_window)
+
+    @Slot(str)
+    def _save_smooth_method(self, smooth_method: str):
+        self.settings.setValue("plot/smooth_method", smooth_method)
+
+    @Slot(str)
+    def _save_smooth_window(self, smooth_window: int):
+        self.settings.setValue("plot/smooth_window", smooth_window)
