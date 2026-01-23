@@ -388,7 +388,6 @@ class DataPipeline(QObject):
         self.right_threshed_old = self.right_threshed.copy()
         self._recalculate_conversion_factor()
 
-
     def on_author_changed(self, new_author):
         self.author = new_author
         log.info(f"User: {self.author}")
@@ -473,7 +472,7 @@ class DataPipeline(QObject):
                 frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
             )
         self.data_version += 1
-        self.left_keypoint_changed.emit(self.right_index)
+        self.left_keypoint_changed.emit(self.left_index)
 
     def set_right_keypoint(self, index: int, load_frame: bool = True):
         """
@@ -548,7 +547,7 @@ class DataPipeline(QObject):
         if not self.csv_path or "p" not in self.zeroed_data:
             return {"pre": "", "current": "0.00", "post": ""}
         # All the slicing and formatting logic is now here
-        new_index = index - self.trim_start
+        new_index = max(0, index - self.trim_start)
         p_data = self.zeroed_data["p"]
         pre_vals = p_data[max(0, new_index - 3):new_index]
         current_val = p_data[new_index]

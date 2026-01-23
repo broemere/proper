@@ -25,6 +25,8 @@ class FrameTab(QWidget):
 
         self._currently_displayed_left_frame_idx = -1
         self._currently_displayed_right_frame_idx = -1
+        self._trim_start = -1
+        self._trim_stop = -1
 
         self._left_debounce = QTimer(self, singleShot=True)
         self._left_debounce.setInterval(2000)
@@ -36,6 +38,11 @@ class FrameTab(QWidget):
     def showEvent(self, event: QEvent):
         """This Qt event fires every time the widget is shown."""
         super().showEvent(event)
+        if self._trim_start != self.pipeline.trim_start or self._trim_stop != self.pipeline.trim_stop:
+            print("Fixing index sync")
+            self._trim_start = self.pipeline.trim_start
+            self._trim_stop = self.pipeline.trim_stop
+            self._is_state_synced = False
         if self.isVisible() and not self._is_state_synced:
             self._sync_ui_to_pipeline()
 
@@ -190,11 +197,11 @@ class FrameTab(QWidget):
         # perform the "lazy load" check.
         # If the frame we are showing is out of sync with the pipeline's state,
         # command the pipeline to load the correct one.
-        if self._currently_displayed_left_frame_idx != self.pipeline.left_index:
+        if self._currently_displayed_left_frame_idx != self.pipeline.left_index or self._currently_displayed_left_frame_idx < self.pipeline.trim_start:
             log.info("Left frame is stale. Requesting updated frame from pipeline.")
             self.pipeline.set_left_keypoint(self.pipeline.left_index, load_frame=True)
 
-        if self._currently_displayed_right_frame_idx != self.pipeline.right_index:
+        if self._currently_displayed_right_frame_idx != self.pipeline.right_index or self._currently_displayed_right_frame_idx > self.pipeline.trim_stop:
             log.info("Right frame is stale. Requesting updated frame from pipeline.")
             self.pipeline.set_right_keypoint(self.pipeline.right_index, load_frame=True)
 
@@ -234,8 +241,19 @@ class FrameTab(QWidget):
             self.right_goto.setValue(self.pipeline.final_pressure)
 
             # 5. Refresh pressure labels with the correct indices
-            self._refresh_left_pressures(left_idx)
-            self._refresh_right_pressures(right_idx)
+            self._refresh_left_pressures(max(left_idx, start))
+            self._refresh_right_pressures(min(right_idx, stop))
+
+            # perform the "lazy load" check.
+            # If the frame we are showing is out of sync with the pipeline's state,
+            # command the pipeline to load the correct one.
+            if self._currently_displayed_left_frame_idx != self.pipeline.left_index or self._currently_displayed_left_frame_idx < self.pipeline.trim_start:
+                log.info("Left frame is stale. Requesting updated frame from pipeline.")
+                self.pipeline.set_left_keypoint(self.pipeline.left_index, load_frame=True)
+
+            if self._currently_displayed_right_frame_idx != self.pipeline.right_index or self._currently_displayed_right_frame_idx > self.pipeline.trim_stop:
+                log.info("Right frame is stale. Requesting updated frame from pipeline.")
+                self.pipeline.set_right_keypoint(self.pipeline.right_index, load_frame=True)
 
             self._is_state_synced = True
 
@@ -259,13 +277,16 @@ class FrameTab(QWidget):
 
     def _refresh_left_pressures(self, index: int):
         # The View asks the Model for the data it needs, already processed.
+        print("Refreshing left", index)
         pressure_data = self.pipeline.get_pressure_display_data(index)
+        self._currently_displayed_left_frame_idx = index
         self.left_value_pre.setText(pressure_data["pre"])
         self.left_value_lbl.setText(pressure_data["current"])
         self.left_value_post.setText(pressure_data["post"])
 
     def _refresh_right_pressures(self, index: int):
         pressure_data = self.pipeline.get_pressure_display_data(index)
+        self._currently_displayed_right_frame_idx = index
         self.right_value_pre.setText(pressure_data["pre"])
         self.right_value_lbl.setText(pressure_data["current"])
         self.right_value_post.setText(pressure_data["post"])
