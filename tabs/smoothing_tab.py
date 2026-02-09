@@ -3,7 +3,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget, QPushButton, QStyle
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget, QPushButton, QStyle, QCheckBox
 from data_pipeline import DataPipeline
 from widgets.error_bus import user_error
 from widgets.user_messages import HELP_CONTENT
@@ -58,9 +58,21 @@ class SmoothingTab(QWidget):
             symbolSize=7,
             name="Pressures of Interest"
         )
-        self.original_curve.setZValue(0)
-        self.spline_curve.setZValue(1)  # spline curve is always drawn on top of the original
-        self.interest_points.setZValue(2)  # Ensure points are drawn on top
+        self.original_curve.setZValue(1)
+        self.spline_curve.setZValue(2)  # spline curve is always drawn on top of the original
+        self.interest_points.setZValue(3)  # Ensure points are drawn on top
+
+        self.tangent_lines = []
+        max_tangents = 10  # Cap at 10 to be safe
+        tangent_pen = pg.mkPen('k', width=2)
+        for _ in range(max_tangents):
+            line = pg.PlotCurveItem(pen=tangent_pen)
+            line.setZValue(0)  # Above everything else
+            line.setVisible(False)
+            self.plot_widget.addItem(line)
+            self.tangent_lines.append(line)
+
+
         self.plot_widget.setLabel("left", "<b>Stress [kPa]</b>")
         self.plot_widget.setLabel("bottom", "<b>Stretch [-]</b>")
         layout.addWidget(self.plot_widget)
@@ -86,6 +98,16 @@ class SmoothingTab(QWidget):
         self.s_spinbox.setValue(10000)
         self.s_spinbox.setFixedWidth(80)  # Accommodate larger numbers
         controls_layout.addWidget(self.s_spinbox)
+
+        # --- Toggles ---
+        self.show_spline_cb = QCheckBox("Spline")
+        self.show_spline_cb.setChecked(True)
+        self.show_tangents_cb = QCheckBox("Tangents")
+        self.show_tangents_cb.setChecked(True)
+
+        controls_layout.addWidget(self.show_spline_cb)
+        controls_layout.addWidget(self.show_tangents_cb)
+
         self.help_btn = QPushButton(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxQuestion), "")
         self.help_btn.setToolTip("Smoothing tab info")
         title, msg = HELP_CONTENT["smoothing"]
@@ -96,6 +118,8 @@ class SmoothingTab(QWidget):
     def connect_signals(self):
         self.s_slider.valueChanged.connect(self._slider_value_changed)
         self.s_spinbox.valueChanged.connect(self._spinbox_value_changed)
+        self.show_spline_cb.stateChanged.connect(self.run_spline_transform)
+        self.show_tangents_cb.stateChanged.connect(self.run_spline_transform)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -133,12 +157,47 @@ class SmoothingTab(QWidget):
         s_value = self.s_slider.value()
         #log.info(f"Requesting spline transform with s={s_value}")
         spline_y_values = self.pipeline.calculate_spline(s_value)
+
+        show_spline = self.show_spline_cb.isChecked()
+        self.spline_curve.setVisible(show_spline)
+
+        for line in self.tangent_lines:
+            line.setVisible(False)
+
         if spline_y_values is not None:
-            self.spline_curve.setData(self.pipeline.stretch, spline_y_values)
+            if show_spline:
+                self.spline_curve.setData(self.pipeline.stretch, spline_y_values)
             points = self.pipeline.get_interest_points_on_spline()
+            show_tangents = self.show_tangents_cb.isChecked()
             if points:
-                x_coords, y_coords = points
+                x_coords, y_coords, slopes = points
                 self.interest_points.setData(x_coords, y_coords)
+
+                if show_tangents:
+
+                    x_range = self.pipeline.stretch.max() - self.pipeline.stretch.min()
+                    y_range = spline_y_values.max() - spline_y_values.min()
+                    k = y_range / x_range if x_range != 0 else 1
+
+                    # 2. Desired visual length (relative to X-axis)
+                    L = 0.05
+
+                    for i, (x, y, m) in enumerate(zip(x_coords, y_coords, slopes)):
+                        if i < len(self.tangent_lines):
+                            # 3. Calculate dx using the scaled slope (m/k)
+                            # This treats the plot as if it were a 1:1 square
+                            m_scaled = m / k
+                            dx_unit = L / np.sqrt(1 + m_scaled ** 2)
+                            dy_unit = m * (dx_unit / k)  # Apply scaling back to dy
+
+                            # Note: we use dx_unit for X, but dy_unit for Y
+                            x_data = np.array([x - dx_unit, x + dx_unit])
+                            y_data = np.array([y - (m * dx_unit), y + (m * dx_unit)])
+
+                            self.tangent_lines[i].setData(x_data, y_data)
+                            self.tangent_lines[i].setVisible(True)
+
+
             else:
                 self.interest_points.clear()
         else:

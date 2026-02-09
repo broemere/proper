@@ -983,7 +983,7 @@ class DataPipeline(QObject):
         if self.p_spline is None or self.stress.size == 0:
             return None
 
-        x_coords, y_coords = [], []
+        x_coords, y_coords, slopes = [], [], []
 
         start = self.left_index - self.trim_start
         stop = self.right_index - self.trim_start + 1
@@ -1002,8 +1002,9 @@ class DataPipeline(QObject):
                 # Use the spline object to find the smoothed stress (y-coordinate)
                 smoothed_stress_at_target = self.p_spline(stretch_at_target)
                 y_coords.append(float(smoothed_stress_at_target))
+                slopes.append(float(self.p_spline.derivative()(stretch_at_target)))
 
-        return x_coords, y_coords
+        return x_coords, y_coords, slopes
 
 
 
@@ -1105,6 +1106,17 @@ class DataPipeline(QObject):
         stretch_true = diameter_true / diameter_true[0]
         self.stress = (np.array(p_zeroed) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
         stress_true = (np.array(p_zeroed) * self.MMHG2KPA) * (diameter_true / 2) / (2 * thickness_true)
+
+        ras = np.linspace(self.ra_left, self.ra_right, len(frames))
+        rbs = np.linspace(self.rb_left, self.rb_right, len(frames))
+
+        stress_crown = (np.array(p_zeroed) * self.MMHG2KPA) * (ras ** 2) / (2 * thickness * rbs) # plot with stretch_b
+
+        stress_equator_1 = (np.array(p_zeroed) * self.MMHG2KPA) * ras / (2 * thickness)
+        stress_equator_2 = ((np.array(p_zeroed) * self.MMHG2KPA) * ras / thickness) * (1 - ((ras ** 2) / (2 * rbs ** 2)))
+
+        stretch_a = ras / ras[0]
+        stretch_b = rbs / rbs[0]
 
         return frames, start, stop, thickness, volume, diameter, p_zeroed#, thickness_true, stress_true, stretch_true
 
