@@ -1,8 +1,12 @@
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QUrl
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QComboBox, QFormLayout
+from PySide6.QtGui import QDesktopServices
 from data_pipeline import DataPipeline
 from processing.data_transform import format_value
+import platform
+import subprocess
 import logging
+import os
 log = logging.getLogger(__name__)
 
 class ExportTab(QWidget):
@@ -54,8 +58,51 @@ class ExportTab(QWidget):
         # --- Bottom Section: Export Control ---
         export_layout = QHBoxLayout()
         export_layout.addStretch()
-        self.export_btn = QPushButton("Export Results")
+
+        # 1. Style the Export Button
+        self.export_btn = QPushButton("📥 Export Results")
+        self.export_btn.setMinimumHeight(35)
+        self.export_btn.setMinimumWidth(150)
+        self.export_btn.setStyleSheet("""
+                    QPushButton {
+                        border-radius: 5px;
+                        border: 1px solid #223620;
+                        font-weight: bold;
+                        padding: 5px 15px;
+                    }
+                    QPushButton:hover {
+                        background-color: #88C484;
+                    }
+                    QPushButton:pressed {
+                        background-color: #40633D;  /* Darker when clicked */
+                        padding-left: 17px;        /* Subtle "push" effect */
+                        padding-top: 7px;
+                    }
+                    QPushButton:disabled {
+                        background-color: #a0a0a0;
+                        border: 1px solid #808080;
+                    }
+                """)
+
+        # 2. Style the Open Folder Button (Secondary Action)
+        self.open_btn = QPushButton("📂 Open Folder")
+        self.open_btn.setMinimumHeight(35)
+        self.open_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: transparent;
+                        color: #333333;
+                        border: 1px solid #cccccc;
+                        border-radius: 5px;
+                        padding: 5px 15px;
+                    }
+                    QPushButton:hover {
+                        background-color: #f0f0f0;
+                        border-color: #999999;
+                    }
+                """)
+
         export_layout.addWidget(self.export_btn)
+        export_layout.addWidget(self.open_btn)
         export_layout.addStretch()
         main_layout.addLayout(export_layout)
 
@@ -67,8 +114,10 @@ class ExportTab(QWidget):
         self.pipeline.n_ellipses_changed.connect(self._update_selector_display)
         # When pipeline results are updated, update the labels
         self.pipeline.results_updated.connect(self._update_all_fields)
-        # Connect export button
+        # Connect buttons
         self.export_btn.clicked.connect(self.pipeline.generate_report)
+        self.open_btn.clicked.connect(self.open_current_directory)
+
 
     def _create_data_section(self, title: str) -> tuple[QWidget, dict[str, QLabel]]:
         """
@@ -131,3 +180,29 @@ class ExportTab(QWidget):
         self.selector_combo.blockSignals(True)
         self.selector_combo.setCurrentIndex(n_ellipses - 1)
         self.selector_combo.blockSignals(False)
+
+    @Slot()
+    def open_current_directory(self):
+        """Opens the OS file explorer at the directory of the current CSV."""
+        # Assuming self.pipeline.csv_path exists based on your description
+        csv_path = getattr(self.pipeline, 'csv_path', None)
+
+        if not csv_path or not os.path.exists(csv_path):
+            log.warning("Cannot open folder: CSV path is invalid or does not exist.")
+            return
+
+        folder_path = os.path.dirname(os.path.abspath(csv_path))
+
+        # The Cross-Platform Way
+        if platform.system() == "Windows":
+            # On Windows, QDesktopServices works, but using 'explorer' directly
+            # allows you to pre-select the file if you wanted.
+            # For just the folder, this is the most reliable:
+            if self.pipeline.exported_file is not None:
+                subprocess.run(['explorer', '/select,', os.path.normpath(self.pipeline.exported_file)])
+            else:
+                os.startfile(folder_path)
+        else:
+            # On macOS and Linux, QDesktopServices is excellent
+            folder_url = QUrl.fromLocalFile(folder_path)
+            QDesktopServices.openUrl(folder_url)

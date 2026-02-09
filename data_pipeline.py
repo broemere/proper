@@ -129,6 +129,7 @@ class DataPipeline(QObject):
 
         # EXPORT TAB
         self.n_ellipses = 0
+        self.exported_file = None
 
         self.drawing_tool = 'lasso'
 
@@ -1235,6 +1236,7 @@ class DataPipeline(QObject):
                 formatted_row = [('' if np.isnan(val) else f'{val:.10g}') for val in row_values]
                 f.write(','.join(formatted_row) + '\n')
         print(f"Report successfully written to {filepath}")
+        self.exported_file = filepath
 
     def emit_results_to_ui(self, report_data: dict, num_rows: int):
         results_output = {"first": {
