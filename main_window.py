@@ -8,6 +8,7 @@ from widgets.status_bar import StatusBarWidget
 from widgets.analysis_session_widget import AnalysisSessionWidget
 from widgets.error_bus import bus
 from widgets.update_checker import UpdateChecker
+from pathlib import Path
 import json
 import gzip
 import os
@@ -144,7 +145,7 @@ class MainWindow(QMainWindow):
         """Handles the request to close a 'supertab'."""
         widget_to_close = self.super_tabs.widget(index)
         if widget_to_close:
-            # You could add a confirmation dialog here if needed
+            # could add a confirmation dialog here if needed
             # e.g., if self.confirm_close():
             log.info(f"Closing super tab at index {index}.")
             self.super_tabs.removeTab(index)
@@ -220,7 +221,6 @@ class MainWindow(QMainWindow):
         """
         Worker function that writes the session state to a gzipped JSON file.
         Uses a compact JSON format for maximum compression.
-        This is intended to be run in a background thread by the TaskManager.
 
         Args:
             signals: The signals object provided by the TaskManager.
@@ -235,10 +235,10 @@ class MainWindow(QMainWindow):
             signals.message.emit(f"Compressing and saving to {file_path}...")
             signals.progress.emit(25)
 
-            # Use gzip.open with 'wt' for writing text in a compressed manner.
-            # The 'encoding' is important for json.dump.
+            # Use gzip.open with 'wt' for writing text compressed
+            # encoding is important for json.dump.
             with gzip.open(file_path, 'wt', encoding='utf-8') as f:
-                # Dump the json in a compact format (no indent) for better compression.
+                # Dump the json in compact format (no indent) for better compression
                 json.dump(state, f)
 
             signals.progress.emit(100)
@@ -275,10 +275,11 @@ class MainWindow(QMainWindow):
         """
         log.info("'Load Session' clicked")
         options = QFileDialog.Options()
+        last_dir = self.settings.value("last_dir", "") or str(Path.home())
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Load Compressed Session",
-            "",
+            last_dir,
             f"Compressed JSON (*{SAVE_FILETYPE});;All Files (*)",
             options=options
         )
@@ -333,7 +334,6 @@ class MainWindow(QMainWindow):
         file_name = os.path.splitext(os.path.basename(file_path))[0]
         self.super_tabs.setTabText(new_tab_index, file_name)
 
-        # --- THE FIX ---
         # Instead of loading the state immediately, schedule it to run
         # after the event loop has had a chance to fully create the new tab.
         QTimer.singleShot(0, lambda: self._finish_loading_state(new_tab_widget, state, file_name))
@@ -345,7 +345,6 @@ class MainWindow(QMainWindow):
         """
         try:
             new_tab_widget.pipeline.load_session(state)
-            # Now that it's loaded, we can switch to the tab
             new_tab_index = self.super_tabs.indexOf(new_tab_widget)
             self.super_tabs.setCurrentIndex(new_tab_index)
             # self.status_bar.update_status(f"Loaded session {file_name}", 5000)
@@ -370,7 +369,7 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
         else:
-            self.resize(1300, 750)  # Fallback to a default size
+            self.resize(1300, 750)  # default size fallback
 
     @Slot(str)
     def on_update_available(self, new_version):
@@ -388,7 +387,6 @@ class MainWindow(QMainWindow):
             f"Click <a href='{REPO_URL}'>here</a> to view the release page."
         )
 
-        # Use your existing dialog function
         self.show_info_dialog("Update Available", msg)
 
     @Slot(tuple)
@@ -415,7 +413,7 @@ class MainWindow(QMainWindow):
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Information)
         msg_box.setWindowTitle(title)
-        msg_box.setTextFormat(Qt.RichText)  # Tell the box to parse HTML
+        msg_box.setTextFormat(Qt.RichText)  # parse HTML
         msg_box.setTextInteractionFlags(Qt.TextBrowserInteraction)
         msg_box.setText(f"<b>{title}</b>")
         msg_box.setInformativeText(message)

@@ -182,7 +182,6 @@ class PlotTab(QWidget):
     def _apply_trim(self):
         start = self.spin_start.value()
         stop = self.spin_stop.value()
-        print("Setting trim", start, stop)
         self.pipeline.set_trimming(start, stop)
 
     def _apply_zeroing(self):

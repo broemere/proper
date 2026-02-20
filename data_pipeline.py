@@ -250,12 +250,12 @@ class DataPipeline(QObject):
         minimum of the CSV data length and the video frame count.
         Returns 0 if either data source is not loaded.
         """
-        if not self.raw_data["t"] and self.frame_count == 0:
+        if self.raw_data["t"].size == 0 and self.frame_count == 0:
             return 0
 
         if self.frame_count == 0:
             return len(self.raw_data["t"])
-        elif not self.raw_data["t"]:
+        elif self.raw_data["t"].size == 0:
             return self.frame_count
         else:
             return min(len(self.raw_data["t"]), self.frame_count)
