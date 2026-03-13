@@ -6,6 +6,8 @@ from PySide6.QtGui import QImage, QPixmap
 from skimage.measure import label, regionprops_table
 from skimage.color import label2rgb
 import logging
+from pathlib import Path
+from collections import OrderedDict
 log = logging.getLogger(__name__)
 
 
@@ -357,7 +359,7 @@ def create_visual_from_labels(signals, labels, left_right, min_size=None):
         signals.message.emit("Error during visualization.")
         return {'labels': labels, 'visual': None}  # Return a dict to maintain structure
 
-def convert_numpy(obj):
+def serialize_objects(obj):
     """
     Recursively convert numpy arrays and scalars into JSON-serializable forms:
       - ndarray → dict with keys __ndarray__, dtype, shape, data (as nested lists)
@@ -372,17 +374,28 @@ def convert_numpy(obj):
     elif isinstance(obj, np.generic):
         # covers np.int32, np.float64, etc.
         return obj.item()
+    elif isinstance(obj, Path):
+        # Convert Path objects to a special dictionary format
+        return {
+            "__path__": str(obj)
+        }
+    elif isinstance(obj, OrderedDict):
+        # CRITICAL: This must come before the standard dict check!
+        # We save it as a list of pairs to guarantee order preservation in JSON
+        return {
+            "__OrderedDict__": [[k, serialize_objects(v)] for k, v in obj.items()]
+        }
     elif isinstance(obj, dict):
-        return {k: convert_numpy(v) for k, v in obj.items()}
+        return {k: serialize_objects(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [convert_numpy(v) for v in obj]
+        return [serialize_objects(v) for v in obj]
     elif isinstance(obj, tuple):
-        return tuple(convert_numpy(v) for v in obj)
+        return tuple(serialize_objects(v) for v in obj)
     else:
         return obj
 
 
-def restore_numpy(obj):
+def deserialize_objects(obj):
     """
     Recursively walk obj and convert back to numpy arrays when possible:
       - If obj is a dict with "__ndarray__", build an array with the right dtype & shape.
@@ -396,7 +409,16 @@ def restore_numpy(obj):
             arr = arr.reshape(obj["shape"])
         return arr
 
-    # 2) Try to turn pure numeric lists into arrays
+    # 2) Reverse of encoded Path
+    if isinstance(obj, dict) and "__path__" in obj:
+        return Path(obj["__path__"])
+
+    # 3) Reverse of encoded OrderedDict
+    if isinstance(obj, dict) and "__OrderedDict__" in obj:
+        # Rebuild the OrderedDict from the list of [key, value] pairs
+        return OrderedDict([(k, deserialize_objects(v)) for k, v in obj["__OrderedDict__"]])
+
+    # 4) Try to turn pure numeric lists into arrays
     if isinstance(obj, list):
         try:
             arr = np.array(obj)
@@ -406,13 +428,13 @@ def restore_numpy(obj):
         except Exception:
             pass
         # otherwise, recurse into each element
-        return [restore_numpy(v) for v in obj]
+        return [deserialize_objects(v) for v in obj]
 
-    # 3) Recurse into plain dicts
+    # 5) Recurse into plain dicts
     if isinstance(obj, dict):
-        return {k: restore_numpy(v) for k, v in obj.items()}
+        return {k: deserialize_objects(v) for k, v in obj.items()}
 
-    # 4) Leave everything else alone
+    # 6) Leave everything else alone
     return obj
 
 def format_value(value: float) -> str:

@@ -35,6 +35,10 @@ class ThicknessTab(QWidget):
             self._has_been_shown = True
             self._show_thickness_image(current_image)
 
+            # INJECT INITIAL STATE: If the pipeline loaded lines, draw them immediately
+            if self.pipeline.loaded_state and len(self.pipeline.thickness_coords) > 0:
+                self.line_canvas.inject_lines(self.pipeline.thickness_coords)
+
     def init_ui(self):
         """
         Initializes the user interface, splitting it into a canvas and a table area.
@@ -118,14 +122,13 @@ class ThicknessTab(QWidget):
     @Slot()
     def refresh_table(self, *args):
         """
-        Refreshes the thickness table using the data from the pipeline.
+        REVERTED: Back to the original, clean logic since the pipeline
+        is handing us a list of floats again.
         """
         factor = self.pipeline.conversion_factor or 1.0
+        line_lengths = self.pipeline.thickness_data  # These are back to being floats!
 
-        # Read data from the pipeline, the single source of truth
-        line_lengths = self.pipeline.thickness_data
-
-        if not line_lengths:
+        if len(line_lengths) == 0:
             self.table.setRowCount(1)
             self.table.clearContents()
         else:
@@ -139,22 +142,27 @@ class ThicknessTab(QWidget):
         self._update_table_size()
 
     @Slot(list)
-    def _on_lines_updated(self, lines: list[float]):
+    def _on_lines_updated(self, lines: list):
         """
-        Receives the full list of lines from the canvas and updates the pipeline.
+        UPDATED: The crazy loaded_state boolean guard is gone!
+        Just pass the data straight to the pipeline.
         """
         self.pipeline.set_thickness_data(lines)
 
     @Slot(np.ndarray)
     def _show_thickness_image(self, frame: np.ndarray):
-        """Converts a numpy array to QPixmap and sets it as the canvas background."""
         pixmap = numpy_to_qpixmap(frame)
-        self.line_canvas.set_background(pixmap)
+        if self._has_been_shown:
+            self.line_canvas.set_background(pixmap)
+            if self.pipeline.loaded_state and len(self.pipeline.thickness_coords) > 0:
+                self.line_canvas.inject_lines(self.pipeline.thickness_coords)
 
     @Slot()
     def _reload_base_image(self):
         """Fetches the original image from the pipeline and resets the canvas."""
         if self.pipeline.right_image is not None:
+            # Tell the pipeline to wipe the lines
+            self.pipeline.set_thickness_data([])
             self._show_thickness_image(self.pipeline.right_image)
 
     # --- NEW: Handle key presses at the tab level ---

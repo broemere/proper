@@ -1,432 +1,199 @@
-from PySide6.QtCore import Qt, Signal, QPointF, QRect
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QSizePolicy,
-    QStyle, QCheckBox, QLineEdit, QGridLayout, QGridLayout, QButtonGroup
-)
-from PySide6.QtGui import QPalette, QPixmap, QColor, QPainter, QImage, QPen, QCursor, QIcon
-from data_pipeline import DataPipeline
-import numpy as np
-from processing.resource_loader import load_cursor
+from PySide6.QtCore import Qt, Signal, QPointF, QLineF
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsLineItem
+from PySide6.QtGui import QPixmap, QColor, QPainter, QPen
+import math
 
 
-class ScaledLineCanvas(QWidget):
+class ScaledLineCanvas(QGraphicsView):
     """
-    A canvas that:
-      • Always scales its background image to fit the widget (preserving aspect ratio).
-      • Lets the user draw exactly one line (two clicks), but does NOT erase
-        the old line until the new line is finished.
-      • Lets the user draw a zoom‐box (two clicks) to crop/zoom the image,
-        then automatically returns to line mode.
-      • Emits mode_changed(str) whenever the mode flips.
+    A QGraphicsView canvas for drawing a single measurement line on a zoomable image.
+    Automatically handles scroll bars, coordinate transformations, and zooming.
     """
-
-    mode_changed = Signal(str)
-    line_completed = Signal(float)  # emit “pixel length” when a line is finished
+    line_completed = Signal(list)  # Emits: [length, x1, y1, x2, y2]
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Stores the full-resolution QPixmap of the background:
-        self._pix_full: QPixmap | None = None
-
-        # “Official” line (image-space coords):
-        #   'points': [QPointF, QPointF] or fewer
-        #   'complete': bool
-        #   'color': QColor
-        self.line = {
-            'points': [],
-            'complete': False,
-            'color': QColor(Qt.black)
-        }
-
-        # If the user begins a new line while one is already complete,
-        # we stash the old one here until the new one finishes or is cancelled.
-        self._old_line = None  # type: dict[str, object] | None
-
-        # For zoom: store up to two image-space corners
-        self.zoom_pts: list[QPointF] = []
-
-        # Last mouse position (widget coords) for preview (line or zoom box)
-        self._mouse_pos: QPointF | None = None
-
-        # Current mode: either 'line' or 'zoom'
-        self.mode = 'zoom'
-
-        # Default final color for any newly completed line
-        self.final_color = QColor(Qt.green)
-
-        # Cached values computed each paintEvent:
-        self._scaled_pix: QPixmap | None = None
-        self._offset_x: float = 0.0
-        self._offset_y: float = 0.0
-        self._scale_factor: float = 1.0
-
-        self._zoom_cursor = load_cursor("zoom", hot_x=1, hot_y=1)
-        self._scale_cursor = load_cursor("scale", hot_x=1, hot_y=1)
+        # --- Scene and View Setup ---
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self.setRenderHint(QPainter.Antialiasing, True)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.StrongFocus)
 
-    # ——————————————
-    # Public API
+        # --- State Variables ---
+        self._image_item = None
+        self._active_line_item = None
+        self._completed_line_item = None
+
+        # --- Drawing Styles ---
+        self._active_pen = QPen(QColor("red"), 5)
+        self._active_pen.setCosmetic(True)  # Keeps the line 2px thick regardless of zoom
+        self._completed_pen = QPen(QColor("#00FF00"), 5)
+        self._completed_pen.setCosmetic(True)
 
     def set_background(self, pixmap: QPixmap):
-        """
-        Replace the full-res background pixmap, clear any lines or zooms.
-        """
-        self._pix_full = pixmap
+        """Clears the scene and sets a new background image."""
+        self.clear()
+        self._image_item = self._scene.addPixmap(pixmap)
+        self.reset_view()
 
-        # Reset the official line
-        self.line = {
-            'points': [],
-            'complete': False,
-            'color': QColor(self.final_color)
-        }
-        self._old_line = None
-        # Reset any in-progress zoom
-        self.zoom_pts = []
-        self._mouse_pos = None
-        self.set_mode("zoom")
-        self.update()
+    def reset_view(self):
+        """Resets the view to fit the entire image within the viewport."""
+        if self._image_item:
+            self.fitInView(self._image_item, Qt.KeepAspectRatio)
 
-    def set_final_color(self, color: QColor):
-        """
-        Change default color for new lines. If a line is already complete,
-        recolor it immediately.
-        """
-        self.final_color = color
-        if self.line['complete']:
-            self.line['color'] = QColor(color)
-        self.update()
-
-    def set_mode(self, mode: str):
-        """
-        Switch between 'line' and 'zoom' modes. Cancels any half-done line or zoom.
-        Emits mode_changed if the mode actually switches.
-        """
-        if mode not in ('line', 'zoom') or mode == self.mode:
-            return
-
-        old_mode = self.mode
-        self.mode = mode
-
-        # If we had stashed an old line (_old_line) but were mid-drawing a new one,
-        # restore the old line now, because switching mode cancels the new.
-        if self._old_line is not None and not self.line['complete']:
-            self.line = self._old_line
-            self._old_line = None
-
-        # Cancel any incomplete line
-        if not self.line['complete']:
-            self.line = {
-                'points': [],
-                'complete': False,
-                'color': QColor(self.final_color)
-            }
-            self._old_line = None
-
-        # Cancel any incomplete zoom
-        self.zoom_pts = []
-        self._mouse_pos = None
-
-        self.update()
-        self.mode_changed.emit(self.mode)
-
-        if mode != old_mode:
-            self._update_cursor()
+    def clear(self):
+        """Clears all items from the canvas."""
+        self._scene.clear()
+        self._image_item = None
+        self._active_line_item = None
+        self._completed_line_item = None
 
     def undo_last_line(self):
-        """
-        If there is a completed line, remove it immediately.
-        """
-        if self.line['complete']:
-            self.line = {
-                'points': [],
-                'complete': False,
-                'color': QColor(self.final_color)
-            }
-            self._old_line = None
-            self._mouse_pos = None
-            self.update()
+        """Removes the completed line from the canvas and resets the pipeline scale."""
+        if self._completed_line_item:
+            self._scene.removeItem(self._completed_line_item)
+            self._completed_line_item = None
+            # Emit a 0-length line to safely clear the scale from the pipeline
+            self.line_completed.emit([0.0, 0.0, 0.0, 0.0, 0.0])
 
-    def get_line_length(self) -> float | None:
-        """
-        Return the length in pixels of the completed line (in full-image coords),
-        or None if no line is complete.
-        """
-        pts = self.line['points']
-        if self.line['complete'] and len(pts) == 2:
-            dx = pts[1].x() - pts[0].x()
-            dy = pts[1].y() - pts[0].y()
-            return (dx * dx + dy * dy) ** 0.5
-        return None
+    def _cancel_active_line(self):
+        """Removes the currently active (uncompleted) red line."""
+        if self._active_line_item:
+            self._scene.removeItem(self._active_line_item)
+            self._active_line_item = None
+
+    def _zoom(self, factor):
+        """Applies a zoom factor, centered on the mouse cursor."""
+        if self._image_item is None:
+            return
+        if factor < 1.0:
+            h_bar = self.horizontalScrollBar()
+            v_bar = self.verticalScrollBar()
+            if h_bar.maximum() <= 0 and v_bar.maximum() <= 0:
+                return
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.scale(factor, factor)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
 
     # ——————————————
     # Mouse & key events
 
-    def mousePressEvent(self, event):
-        if event.button() != Qt.LeftButton or self._pix_full is None:
+    def wheelEvent(self, event):
+        """Handles zooming and panning via the mouse wheel."""
+        if self._image_item is None:
             return
 
-        img_pt = self._widget_to_image(event.position())
-        if img_pt is None:
-            return
+        angle = event.angleDelta().y()
 
-        # 1) Zoom mode
-        if self.mode == 'zoom':
-            if not self.zoom_pts:
-                # First corner
-                self.zoom_pts.append(img_pt)
+        if event.modifiers() == Qt.ControlModifier:
+            if angle > 0:
+                self._zoom(1.15)
             else:
-                # Second corner → complete the zoom
-                self.zoom_pts.append(img_pt)
-                self._apply_zoom_box()
-            return
-
-        # 2) Line mode
-        pts = self.line['points']
-        if self.line['complete']:
-            # There is already a completed line. The user clicked to start a new one.
-            # Save the old line so we can restore it if the new one is canceled.
-            self._old_line = {
-                'points': [QPointF(pts[0]), QPointF(pts[1])],
-                'complete': True,
-                'color': QColor(self.line['color'])
-            }
-            # Start the new line with this first endpoint
-            self.line = {
-                'points': [img_pt],
-                'complete': False,
-                'color': QColor(self.final_color)
-            }
-            self._mouse_pos = None
-            self.update()
-            return
-
-        # If no old line (or line not complete) …
-        if not pts:
-            # First endpoint of a brand-new line
-            self.line['points'].append(img_pt)
+                self._zoom(1 / 1.15)
+        elif event.modifiers() == Qt.ShiftModifier:
+            h_bar = self.horizontalScrollBar()
+            h_bar.setValue(h_bar.value() - angle)
         else:
-            # One endpoint exists but not complete → second click completes the line
-            if len(pts) == 1:
-                self.line['points'].append(img_pt)
-                self.line['complete'] = True
-                self.line['color'] = QColor(self.final_color)
+            super().wheelEvent(event)
 
-                # Discard _old_line because the new line is now official
-                self._old_line = None
+    def mouseDoubleClickEvent(self, event):
+        """Resets the view on double-click and cancels any accidental line."""
+        if event.button() == Qt.LeftButton:
+            self._cancel_active_line()
+            self.reset_view()
+        super().mouseDoubleClickEvent(event)
 
-                # Instead of manually computing, just call get_line_length():
-                length_px = self.get_line_length() or 0.0
-                self.line_completed.emit(length_px)
-        self.update()
+    def mousePressEvent(self, event):
+        """Handles the start and end points of the line."""
+        if event.button() != Qt.LeftButton or self._image_item is None:
+            super().mousePressEvent(event)
+            return
+
+        # Let the framework handle all coordinate mapping natively!
+        scene_pos = self.mapToScene(event.pos())
+
+        if not self._image_item.boundingRect().contains(scene_pos):
+            return
+
+        if self._active_line_item is None:
+            # First click: Start a new active (red) line
+            self._active_line_item = QGraphicsLineItem(QLineF(scene_pos, scene_pos))
+            self._active_line_item.setPen(self._active_pen)
+            self._scene.addItem(self._active_line_item)
+        else:
+            # Second click: Finish the line
+            current_line = self._active_line_item.line()
+            current_line.setP2(scene_pos)
+            self._active_line_item.setLine(current_line)
+
+            # 1. Clean up the old green line if it exists
+            if self._completed_line_item:
+                self._scene.removeItem(self._completed_line_item)
+
+            # 2. Promote the red line to green
+            self._completed_line_item = self._active_line_item
+            self._completed_line_item.setPen(self._completed_pen)
+            self._active_line_item = None
+
+            # 3. Extract the clean scene data and emit
+            finished_line = self._completed_line_item.line()
+            length_px = finished_line.length()
+
+            flat_data = [
+                length_px,
+                finished_line.x1(),
+                finished_line.y1(),
+                finished_line.x2(),
+                finished_line.y2()
+            ]
+            self.line_completed.emit(flat_data)
 
     def mouseMoveEvent(self, event):
-        if self._pix_full is None:
-            return
-
-        self._mouse_pos = event.position()
-
-        # In zoom mode, preview only if first corner is set
-        if self.mode == 'zoom' and len(self.zoom_pts) == 1:
-            self.update()
-            return
-
-        # In line mode, preview only if exactly one endpoint and not complete
-        if self.mode == 'line' and self.line['points'] and not self.line['complete']:
-            self.update()
+        """Updates the active line's endpoint as the mouse moves."""
+        if self._active_line_item:
+            scene_pos = self.mapToScene(event.pos())
+            if self._image_item.boundingRect().contains(scene_pos):
+                current_line = self._active_line_item.line()
+                current_line.setP2(scene_pos)
+                self._active_line_item.setLine(current_line)
+        super().mouseMoveEvent(event)
 
     def keyPressEvent(self, event):
+        """Handles keyboard shortcuts."""
         if event.key() == Qt.Key_Escape:
-            # If user presses Esc while drawing a new line (and old_line is stashed),
-            # revert to the old line:
-            if self._old_line is not None and not self.line['complete']:
-                self.line = self._old_line
-                self._old_line = None
-                self._mouse_pos = None
-                self.update()
-                return
-
-            # If user pressed Esc while drawing a brand-new line (no old_line),
-            # simply cancel it:
-            if self.mode == 'line' and self.line['points'] and not self.line['complete']:
-                self.line = {
-                    'points': [],
-                    'complete': False,
-                    'color': QColor(self.final_color)
-                }
-                self._old_line = None
-                self._mouse_pos = None
-                self.update()
-                return
-
-            # If user pressed Esc while zooming (one corner set)
-            if self.mode == 'zoom' and len(self.zoom_pts) == 1:
-                self.zoom_pts = []
-                self._mouse_pos = None
-                self.update()
-                return
-
-        super().keyPressEvent(event)
-
-    # ——————————————
-    # Painting & scaling
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        if self._pix_full is None:
-            return
-
-        widget_w = self.width()
-        widget_h = self.height()
-        pix_w = self._pix_full.width()
-        pix_h = self._pix_full.height()
-
-        # 1) Scale the full pixmap to fit, preserving aspect ratio.
-        scaled_pix = self._pix_full.scaled(
-            widget_w, widget_h,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self._scaled_pix = scaled_pix
-        self._offset_x = (widget_w - scaled_pix.width()) / 2
-        self._offset_y = (widget_h - scaled_pix.height()) / 2
-        self._scale_factor = scaled_pix.width() / pix_w
-
-        # Draw the scaled background
-        painter.drawPixmap(int(self._offset_x), int(self._offset_y), scaled_pix)
-
-        # 2) If in zoom mode, preview rectangle
-        if self.mode == 'zoom' and len(self.zoom_pts) == 1 and self._mouse_pos:
-            p0 = self._image_to_widget(self.zoom_pts[0])
-            p1 = self._mouse_pos
-            if p0 and p1:
-                rect = QRect(p0.toPoint(), p1.toPoint()).normalized()
-                pen = QPen(Qt.red, 2, Qt.DashLine)
-                painter.setPen(pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRect(rect)
-            return
-
-        # 3) In line mode, draw the old line if it exists
-        if self.mode == 'line' and self._old_line is not None:
-            pts_old = self._old_line['points']
-            if len(pts_old) == 2:
-                p0_old = self._image_to_widget(pts_old[0])
-                p1_old = self._image_to_widget(pts_old[1])
-                if p0_old and p1_old:
-                    pen_old = QPen(self._old_line['color'], 2)
-                    painter.setPen(pen_old)
-                    painter.drawLine(p0_old, p1_old)
-
-        # 4) Now draw either the completed new line, or a preview
-        if self.mode == 'line':
-            pts = self.line['points']
-            if self.line['complete'] and len(pts) == 2:
-                p0 = self._image_to_widget(pts[0])
-                p1 = self._image_to_widget(pts[1])
-                if p0 and p1:
-                    pen = QPen(self.line['color'], 2)
-                    painter.setPen(pen)
-                    painter.drawLine(p0, p1)
-
-            elif len(pts) == 1 and self._mouse_pos:
-                p0 = self._image_to_widget(pts[0])
-                p1 = self._mouse_pos
-                if p0:
-                    pen = QPen(Qt.red, 2)
-                    painter.setPen(pen)
-                    painter.drawLine(p0, p1)
-
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self._update_cursor()
-
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        # back to whatever the OS default is
-        self.unsetCursor()
-
-    # ——————————————
-    # Private helpers
-
-    def _update_cursor(self):
-        if self.mode == "zoom":
-            # show your custom zoom-in cursor
-            self.setCursor(self._zoom_cursor)
+            self._cancel_active_line()
+        elif event.key() == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
+            if self._active_line_item:
+                self._cancel_active_line()
+            else:
+                self.undo_last_line()
+        elif event.key() in (Qt.Key_Equal, Qt.Key_Plus):
+            self._zoom(1.5)
+            event.accept()
+        elif event.key() in (Qt.Key_Minus, Qt.Key_Underscore):
+            self._zoom(1 / 1.5)
+            event.accept()
         else:
-            # line mode or anything else: go back to default arrow
-            self.setCursor(self._scale_cursor)
+            super().keyPressEvent(event)
 
-    def _widget_to_image(self, pt: QPointF) -> QPointF | None:
-        """
-        Convert a point in widget-space to image-space (float), or return None if
-        outside the drawn image area.
-        """
-        if self._pix_full is None or self._scaled_pix is None:
-            return None
+    # ——————————————
+    # Data Injection
 
-        x_w, y_w = pt.x(), pt.y()
-        x0, y0 = self._offset_x, self._offset_y
-        x1 = x_w - x0
-        y1 = y_w - y0
+    def inject_line(self, coords: list):
+        """Draws a saved line directly onto the canvas."""
+        self._cancel_active_line()
 
-        if x1 < 0 or y1 < 0 or x1 > self._scaled_pix.width() or y1 > self._scaled_pix.height():
-            return None
+        # Remove any existing completed line
+        if self._completed_line_item:
+            self._scene.removeItem(self._completed_line_item)
+            self._completed_line_item = None
 
-        inv_scale = 1.0 / self._scale_factor
-        img_x = x1 * inv_scale
-        img_y = y1 * inv_scale
-        return QPointF(img_x, img_y)
-
-    def _image_to_widget(self, pt: QPointF) -> QPointF | None:
-        """
-        Convert a point in image-space to widget-space (float).
-        """
-        if self._pix_full is None or self._scaled_pix is None:
-            return None
-
-        x_img, y_img = pt.x(), pt.y()
-        x_w = x_img * self._scale_factor + self._offset_x
-        y_w = y_img * self._scale_factor + self._offset_y
-        return QPointF(x_w, y_w)
-
-    def _apply_zoom_box(self):
-        """
-        Once two corners are clicked in zoom mode, crop the pixmap to that rectangle,
-        reset state, and switch back to line mode.
-        """
-        if self._pix_full is None or len(self.zoom_pts) != 2:
-            self.zoom_pts = []
-            return
-
-        p0, p1 = self.zoom_pts
-        x0 = max(0, min(p0.x(), p1.x()))
-        y0 = max(0, min(p0.y(), p1.y()))
-        x1 = max(0, max(p0.x(), p1.x()))
-        y1 = max(0, max(p0.y(), p1.y()))
-
-        i_x0 = int(round(x0))
-        i_y0 = int(round(y0))
-        i_x1 = int(round(x1))
-        i_y1 = int(round(y1))
-
-        i_x0 = max(0, min(i_x0, self._pix_full.width() - 1))
-        i_y0 = max(0, min(i_y0, self._pix_full.height() - 1))
-        i_x1 = max(0, min(i_x1, self._pix_full.width() - 1))
-        i_y1 = max(0, min(i_y1, self._pix_full.height() - 1))
-
-        w = max(1, i_x1 - i_x0 + 1)
-        h = max(1, i_y1 - i_y0 + 1)
-        crop_rect = QRect(i_x0, i_y0, w, h)
-
-        cropped = self._pix_full.copy(crop_rect)
-        self.set_background(cropped)
-
-        self.zoom_pts = []
-        self._mouse_pos = None
-
-        # Switch back to line via set_mode so the signal is emitted
-        self.set_mode('line')
-        self.update()
+        if len(coords) == 2:
+            p1, p2 = coords[0], coords[1]
+            line_f = QLineF(p1[0], p1[1], p2[0], p2[1])
+            self._completed_line_item = QGraphicsLineItem(line_f)
+            self._completed_line_item.setPen(self._completed_pen)
+            self._scene.addItem(self._completed_line_item)

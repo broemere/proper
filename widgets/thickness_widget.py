@@ -83,7 +83,7 @@ class ThicknessCanvas(QGraphicsView):
         self.clear()
         self._image_item = self._scene.addPixmap(pixmap)
         self.reset_view()
-        self._emit_lines_updated()
+        #self._emit_lines_updated()
 
     def reset_view(self):
         """Resets the view to fit the entire image within the viewport."""
@@ -106,8 +106,13 @@ class ThicknessCanvas(QGraphicsView):
 
     def _emit_lines_updated(self):
         """Calculates line lengths and emits the signal."""
-        lengths = [item.line().length() for item in self._completed_lines]
-        self.lines_updated.emit(lengths)
+        coords_list = []
+        for item in self._completed_lines:
+            line = item.line()
+            # Append the 4 absolute scene coordinates
+            coords_list.append([line.x1(), line.y1(), line.x2(), line.y2()])
+
+        self.lines_updated.emit(coords_list)
 
     # --- NEW: Helper to cancel the active line ---
     def _cancel_active_line(self):
@@ -236,3 +241,13 @@ class ThicknessCanvas(QGraphicsView):
     def resizeEvent(self, event):
         """The base implementation handles resizing the viewport."""
         super().resizeEvent(event)
+
+    def inject_lines(self, line_coords: list):
+        """NEW: Draws lines silently from a list of coordinates."""
+        for coords in line_coords:
+            if len(coords) == 4:
+                line_f = QLineF(coords[0], coords[1], coords[2], coords[3])
+                item = MeasurementLineItem(line_f)
+                item.setPen(self._line_pen)
+                self._scene.addItem(item)
+                self._completed_lines.append(item)

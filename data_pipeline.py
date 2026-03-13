@@ -2,11 +2,12 @@ from logging import ERROR
 from PySide6.QtCore import QObject, Signal, SignalInstance
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
-from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, convert_numpy, restore_numpy, n_closest_numbers
+from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, serialize_objects, deserialize_objects, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
 from collections import OrderedDict
 import numpy as np
 import logging
+import math
 import json
 import os
 from config import APP_VERSION
@@ -24,6 +25,8 @@ class DataPipeline(QObject):
     state_loaded = Signal()
     drawing_tool_changed = Signal(str)
     author_recieved = Signal(str)
+    csv_filename_updated = Signal(str)
+    video_filename_updated = Signal(str)
 
     # Plotting
     new_data = Signal()
@@ -40,6 +43,7 @@ class DataPipeline(QObject):
     scale_is_manual_changed = Signal(bool)
     manual_conversion_factor_changed = Signal(float)
     conversion_factor_changed = Signal(float)
+    scale_line_coords_changed = Signal(list)
 
     # Frames
     final_pressure_changed = Signal(float)
@@ -63,6 +67,9 @@ class DataPipeline(QObject):
 
     # Thickness
     thickness_changed = Signal(list)
+
+    # Smoothing
+    s_value_changed = Signal(int)
 
     # Export
     n_ellipses_changed = Signal(int)
@@ -94,12 +101,16 @@ class DataPipeline(QObject):
         self.task_manager = None
         self.VERSION = APP_VERSION
         self.data_version = 0
+        self.loaded_state = False
+        self.reload_segmentation = {"left": False, "right": False}
+        self.reload_thicknesses = False
 
         self.left_image: np.ndarray | None = None
         self.right_image: np.ndarray | None = None
         self.left_threshed: np.ndarray | None = None
         self.right_threshed: np.ndarray | None = None
 
+        self.drawing_tool = 'lasso'
         self.left_level_blobs: np.ndarray | None = None
         self.right_level_blobs: np.ndarray | None = None
         self.left_thresh_blobs: np.ndarray | None = None
@@ -110,6 +121,7 @@ class DataPipeline(QObject):
         self.area_data_right = OrderedDict()
 
         self.thickness_data = []
+        self.thickness_coords = []
 
         self.infusion_rate = 0.5  # uL/sec
         self.MMHG2KPA = 1/7.501
@@ -122,23 +134,35 @@ class DataPipeline(QObject):
         self.scale_is_manual = False
         self.manual_conversion_factor = 0.0
         self.conversion_factor = 0.0 # The final, authoritative value
+        self.scale_line_coords = []
 
         # AREA TAB
         self.left_threshed_old: np.ndarray | None = None
         self.right_threshed_old: np.ndarray | None = None
 
+        self.s_value = 0
+
         # EXPORT TAB
         self.n_ellipses = 0
         self.exported_file = None
 
-        self.drawing_tool = 'lasso'
 
+    ### region CSV handling
 
-    def set_drawing_tool(self, tool_name: str):
-        """Sets the tool and emits signal only if changed."""
-        if tool_name in ['lasso', 'polygon'] and self.drawing_tool != tool_name:
-            self.drawing_tool = tool_name
-            self.drawing_tool_changed.emit(tool_name)
+    def load_csv_file(self, file_path: str):
+        """
+        Load a CSV file, initialize the data stages, and compute a hash for the file.
+        """
+        self.csv_path = file_path
+        print(self.csv_path)
+        print(os.path.splitext(os.path.basename(self.csv_path))[0])
+        self.raw_data = load_csv(file_path)
+        #self.set_trimming(0, self.working_length-1)
+        self.new_data.emit()
+        log.info("Finding initial keypoints based on default pressures.")
+        self.update_pipeline()
+        self.find_and_set_keypoint_by_pressure('left', self.initial_pressure)
+        self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
 
     def update_pipeline(self):
         """
@@ -161,22 +185,6 @@ class DataPipeline(QObject):
             self.data_version += 1
             self.transformed_data.emit([self.trimmed_data, self.smoothed_data,self.zeroed_data])
             print("Points plotted:", len(self.zeroed_data["p"]))
-
-    def load_csv_file(self, file_path: str):
-        """
-        Load a CSV file, initialize the data stages, and compute a hash for the file.
-        """
-        self.csv_path = file_path
-        print(self.csv_path)
-        print(os.path.splitext(os.path.basename(self.csv_path))[0])
-        self.raw_data = load_csv(file_path)
-        #self.set_trimming(0, self.working_length-1)
-        self.new_data.emit()
-        log.info("Finding initial keypoints based on default pressures.")
-        self.update_pipeline()
-        self.find_and_set_keypoint_by_pressure('left', self.initial_pressure)
-        self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
-        #
 
     def set_trimming(self, start: int, stop: int):
         """
@@ -206,8 +214,26 @@ class DataPipeline(QObject):
         self.smooth_window_changed.emit(window)
         self.update_pipeline()
 
-    def get_data(self, data_version: str):
-        return getattr(self, f"{data_version}_data", {})
+    @property
+    def working_length(self) -> int:
+        """
+        Returns the effective number of samples for analysis, which is the
+        minimum of the CSV data length and the video frame count.
+        Returns 0 if either data source is not loaded.
+        """
+        if len(self.raw_data["t"]) == 0 and self.frame_count == 0:
+            return 0
+
+        if self.frame_count == 0:
+            return len(self.raw_data["t"])
+        elif len(self.raw_data["t"]) == 0:
+            return self.frame_count
+        else:
+            return min(len(self.raw_data["t"]), self.frame_count)
+
+    # endregion
+
+    ### region VIDEO handling
 
     def load_video_file(self, file_path: str, index=None):
         self.video = file_path
@@ -243,22 +269,9 @@ class DataPipeline(QObject):
             self.find_and_set_keypoint_by_pressure('right', self.final_pressure)
         self.level_update()
 
-    @property
-    def working_length(self) -> int:
-        """
-        Returns the effective number of samples for analysis, which is the
-        minimum of the CSV data length and the video frame count.
-        Returns 0 if either data source is not loaded.
-        """
-        if self.raw_data["t"].size == 0 and self.frame_count == 0:
-            return 0
+    # endregion
 
-        if self.frame_count == 0:
-            return len(self.raw_data["t"])
-        elif self.raw_data["t"].size == 0:
-            return self.frame_count
-        else:
-            return min(len(self.raw_data["t"]), self.frame_count)
+    ### region SESSION handling
 
     def get_state(self, debug_json=False):
         """
@@ -295,7 +308,7 @@ class DataPipeline(QObject):
         # --- 2. Manual Exclusions ---
         # Explicitly remove large or runtime-only objects
         keys_to_exclude = [
-            'task_manager',
+            'task_manager', 'loaded_state', 'backup_state',
             'left_leveled', 'right_leveled',
             'left_threshed', 'right_threshed',
             'left_threshed_old', 'right_threshed_old',
@@ -303,7 +316,10 @@ class DataPipeline(QObject):
         ]
 
         for k in keys_to_exclude:
-            state.pop(k, None)
+            try:
+                state.pop(k, None)
+            except:
+                pass
 
         # 3. Convert any non-serializable objects into a savable format.
         # Here, we convert the list of QPointF objects into a list of tuples.
@@ -311,7 +327,7 @@ class DataPipeline(QObject):
             # This list comprehension creates a new list of simple (x, y) tuples
         #    state['key_locations'] = [(p.x, p.y) for p in state['key_locations']]
 
-        state = convert_numpy(state)
+        state = serialize_objects(state)
 
         if not debug_json:
             print("\n--- Running JSON Serialization Check ---")
@@ -349,45 +365,42 @@ class DataPipeline(QObject):
 
         return state
 
-    def set_state(self, state_dict):
-        """
-        Restores the object's state from a dictionary (loaded from a file).
-
-        This method handles the reverse conversion of data back into its
-        original object representation (e.g., tuples back to QPointF).
-        """
-        # First, convert data back to its special object format
-        #if 'key_locations' in state_dict and state_dict['key_locations']:
-        #    state_dict['key_locations'] = [QPointF(x, y) for x, y in state_dict['key_locations']]
-
-        # Update the object's attributes with the values from the dictionary
-        for key, value in state_dict.items():
-            setattr(self, key, value)
-
-        print("\n--- Pipeline state has been restored ---")
-
     def load_session(self, state_dict):
 
         print("Loaded session!")
-        fixed_dict = restore_numpy(state_dict)
+        fixed_dict = deserialize_objects(state_dict)
         print("Setting variables...")
         for k, v in fixed_dict.items():
             setattr(self, k, v)
             print(k, v)
         print("Refreshing...")
+        self.loaded_state = True
+        self.backup_state = fixed_dict
         self.refresh_session()
 
     def refresh_session(self):
         self.update_pipeline()
-        print("Plot data restored")
         self.author_recieved.emit(self.author)
+        self.csv_filename_updated.emit(self.csv_path)
+        self.video_filename_updated.emit(self.video)
+        self.known_length_changed.emit(self.known_length)
+        self.pixel_length_changed.emit(self.pixel_length)
         self.left_image_changed.emit(self.left_image)
+        self.right_image_changed.emit(self.right_image)
+        self.brightness_changed.emit(self.brightness)
+        self.contrast_changed.emit(self.contrast)
         self.level_update()
+        self.threshold_changed.emit(self.threshold)
         self.segment_image(self.left_threshed, "left")
         self.segment_image(self.right_threshed, "right")
         self.left_threshed_old = self.left_threshed.copy()
         self.right_threshed_old = self.right_threshed.copy()
         self._recalculate_conversion_factor()
+        print(self.scale_line_coords)
+        #self.scale_line_coords_changed.emit(self.scale_line_coords)
+        #self.thickness_changed.emit(self.thickness_data)
+        self.s_value_changed.emit(self.s_value)
+        self.n_ellipses_changed.emit(self.n_ellipses)
 
     def on_author_changed(self, new_author):
         self.author = new_author
@@ -399,8 +412,9 @@ class DataPipeline(QObject):
     def _fg_color(self) -> str:
         return QApplication.instance().palette().color(QPalette.WindowText).name()
 
+    # endregion
 
-    ### SCALE TAB
+    ### region SCALE TAB
 
     def _recalculate_conversion_factor(self):
         """Central calculation. Called whenever an input changes."""
@@ -419,7 +433,22 @@ class DataPipeline(QObject):
             self.known_length_changed.emit(self.known_length)
             self._recalculate_conversion_factor()
 
-    def set_pixel_length(self, length: float):
+    def set_scale_line_data(self, flat_data: list):
+        # Guard clause in case something weird happens
+        if not flat_data or len(flat_data) != 5:
+            return
+
+        # Unpack the 5 numbers
+        length = flat_data[0]
+
+        # Reconstruct the coordinate list for saving/injecting later
+        coords = [
+            (flat_data[1], flat_data[2]),
+            (flat_data[3], flat_data[4])
+        ]
+
+        self.scale_line_coords = coords
+
         if self.pixel_length != length:
             self.pixel_length = length
             self.pixel_length_changed.emit(self.pixel_length)
@@ -451,8 +480,9 @@ class DataPipeline(QObject):
             self.data_version += 1
             self.conversion_factor_changed.emit(self.conversion_factor)
 
+    # endregion
 
-    ### FRAME TAB
+    ### region FRAME TAB
 
     def set_final_pressure(self, pressure: float):
         """Sets the final pressure and emits a signal if it changes."""
@@ -492,14 +522,12 @@ class DataPipeline(QObject):
     def left_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))
         self.left_image = result[first_frame_index]
-        self.left_image_user = None
         self.left_image_changed.emit(self.left_image)
         self.level_update()
 
     def right_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))
         self.right_image = result[first_frame_index]
-        self.right_image_user = None
         self.right_image_changed.emit(self.right_image)
         self.level_update()
 
@@ -559,8 +587,9 @@ class DataPipeline(QObject):
             "post": ", ".join(f"{x:.2f}" for x in post_vals)
         }
 
+    # endregion
 
-    ### LEVEL TAB
+    ### region LEVEL TAB
 
     def set_brightness(self, value: int):
         """Sets the brightness level, emits a signal, and triggers an update."""
@@ -583,6 +612,12 @@ class DataPipeline(QObject):
         self.left_level_blobs = None
         self.right_level_blobs = None
         self.level_update()
+
+    def set_drawing_tool(self, tool_name: str):
+        """Sets the tool and emits signal only if changed."""
+        if tool_name in ['lasso', 'polygon'] and self.drawing_tool != tool_name:
+            self.drawing_tool = tool_name
+            self.drawing_tool_changed.emit(tool_name)
 
     def update_level_blobs(self, side: str, image_array: np.ndarray):
         """Handles the logic of merging a new drawing into the existing blobs."""
@@ -657,8 +692,9 @@ class DataPipeline(QObject):
         self.leveled_images.emit((left_leveled, right_leveled))
         return [left_leveled, right_leveled]
 
+    # endregion
 
-    ### THRESHOLD TAB
+    ### region THRESHOLD TAB
 
     def set_threshold(self, value: int):
         """Sets the brightness level, emits a signal, and triggers an update."""
@@ -743,8 +779,9 @@ class DataPipeline(QObject):
         self.left_threshed, self.right_threshed = self.paste_thresh_blobs(self.left_threshed, self.right_threshed)
         self.threshed_images.emit((self.left_threshed, self.right_threshed))
 
+    # endregion
 
-    ### AREA TAB
+    ### region AREA TAB
 
     def clear_area_data(self, side: str):
         """Clears the stored blob data for the specified side."""
@@ -756,7 +793,14 @@ class DataPipeline(QObject):
             self.area_data_changed.emit(side, {})
 
     def segment_image(self, arr, left_right):
-        self.clear_area_data(left_right)
+        if self.loaded_state:
+            if not self.reload_segmentation[left_right]:
+                self.reload_segmentation[left_right] = True
+            else:
+                self.clear_area_data(left_right)
+        else:
+            self.clear_area_data(left_right)
+        #self.clear_area_data(left_right)
         log.info(f"Queueing segmentation ({left_right}) task.")
         self.task_manager.queue_task(
             label_image,  # The function to run
@@ -833,6 +877,7 @@ class DataPipeline(QObject):
         """
         blob_id, area, cx, cy = blob_props
         data_store = self.area_data_left if left_right == 'left' else self.area_data_right
+        print(left_right, data_store)
         # If the user re-clicks an existing blob, move it to the end (making it the newest)
         if blob_id in data_store:
             data_store.move_to_end(blob_id)
@@ -895,23 +940,37 @@ class DataPipeline(QObject):
             middle_blob_id = unlabeled_blobs[0][0]
             data_store[middle_blob_id][3] = "Middle"
 
+    # endregion
 
+    ### region THICKNESS TAB
 
-    ### THICKNESS TAB
-
-    def set_thickness_data(self, lengths: list[float]):
+    def set_thickness_data(self, coords: list):
         """
-        Replaces the current thickness data with a new, complete list of line lengths.
-        This single method handles adding, undoing, and clearing lines.
+        Accepts the new coordinate payload for canvas redrawing, but calculates
+        and stores the legacy lengths to maintain backward compatibility.
         """
+        # 1. Save the coords for injecting back into the canvas
+        self.thickness_coords = coords
+
+        # 2. Calculate pixel lengths to keep the rest of the app happy!
+        lengths = []
+        for c in coords:
+            if len(c) == 4:
+                length_px = math.hypot(c[2] - c[0], c[3] - c[1])
+                lengths.append(length_px)
+
+        # 3. Update the legacy variable
         self.thickness_data = lengths
+
         log.info(f"Pipeline thickness data updated. {len(lengths)} lines.")
         self.data_version += 1
-        self.thickness_changed.emit(lengths)
 
+        # Emit the lengths so the rest of the app acts completely normally
+        self.thickness_changed.emit(self.thickness_data)
 
+    # endregion
 
-    ### SMOOTHING TAB
+    ### region SMOOTHING TAB
 
     def validate_for_stress_stretch(self) -> tuple | None:
         """
@@ -1007,9 +1066,9 @@ class DataPipeline(QObject):
 
         return x_coords, y_coords, slopes
 
+    # endregion
 
-
-    ### EXPORT TAB
+    ### region EXPORT TAB
 
     def validate_area_data(self):
         """Checks if sufficient area data points are available."""
@@ -1262,3 +1321,5 @@ class DataPipeline(QObject):
                         }
 
         self.results_updated.emit(results_output)
+
+    # endregion

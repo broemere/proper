@@ -165,6 +165,8 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.n_ellipses_changed.connect(self._save_n_ellipses)
         self.pipeline.drawing_tool_changed.connect(self._save_drawing_tool)
         self.pipeline.author_recieved.connect(self.tab_author.setText)
+        self.pipeline.csv_filename_updated.connect(self.file_pickers.set_csv_label)
+        self.pipeline.video_filename_updated.connect(self.file_pickers.set_video_label)
 
     def _load_settings_into_pipeline(self):
         """Reads values from QSettings and populates the pipeline."""

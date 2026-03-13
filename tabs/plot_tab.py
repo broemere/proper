@@ -45,8 +45,8 @@ class PlotTab(QWidget):
         trim_layout = QHBoxLayout()
         trim_layout.setAlignment(Qt.AlignCenter)
         trim_layout.addWidget(QLabel('Trim Data:'))
-        self.spin_start = QSpinBox(minimum=1)
-        self.spin_stop = QSpinBox(minimum=1)
+        self.spin_start = QSpinBox(minimum=0)
+        self.spin_stop = QSpinBox(minimum=0)
         self.spin_start.valueChanged.connect(self._apply_trim)  # Initialize limits after loading data
         self.spin_stop.valueChanged.connect(self._apply_trim)
         trim_layout.addWidget(QLabel('Start'))

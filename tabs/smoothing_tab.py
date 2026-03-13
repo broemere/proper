@@ -116,6 +116,7 @@ class SmoothingTab(QWidget):
         layout.addLayout(controls_layout)
 
     def connect_signals(self):
+        self.pipeline.s_value_changed.connect(self.s_slider.setValue)
         self.s_slider.valueChanged.connect(self._slider_value_changed)
         self.s_spinbox.valueChanged.connect(self._spinbox_value_changed)
         self.show_spline_cb.stateChanged.connect(self.run_spline_transform)
@@ -153,6 +154,8 @@ class SmoothingTab(QWidget):
         return plot
 
     def run_spline_transform(self):
+        print("--------------Running spline transform")
+        print(self.s_slider.value())
         """Performs the spline calculation using the current 's' value and updates the transformed data curve."""
         s_value = self.s_slider.value()
         #log.info(f"Requesting spline transform with s={s_value}")
@@ -255,7 +258,7 @@ class SmoothingTab(QWidget):
         try:
             self.s_slider.setMaximum(new_max)
             self.s_spinbox.setMaximum(new_max)
-            if self.last_plotted_version == -1:
+            if self.last_plotted_version == -1 and not self.pipeline.loaded_state:
                 default_value = int(round(new_max / 10))
                 self.s_slider.setValue(default_value)
                 self.s_spinbox.setValue(default_value)
