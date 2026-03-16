@@ -494,30 +494,40 @@ class DataPipeline(QObject):
         """
         Sets the left keypoint index, validates it, and optionally loads the frame.
         """
-        # Validate and clamp the index to be within the current trim range
-        self.left_index = max(self.trim_start, min(index, self.trim_stop))
-        log.info(f"Setting left keypoint index to: {self.left_index}")
-        if load_frame and self.video:
-            log.info(f"Dispatching frame loader for left_index: {self.left_index}")
-            self.task_manager.queue_task(
-                frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
-            )
-        self.data_version += 1
-        self.left_keypoint_changed.emit(self.left_index)
+        if self.video:
+            if Path(self.video).exists():
+                # Validate and clamp the index to be within the current trim range
+                self.left_index = max(self.trim_start, min(index, self.trim_stop))
+                log.info(f"Setting left keypoint index to: {self.left_index}")
+                if load_frame and self.video:
+                    log.info(f"Dispatching frame loader for left_index: {self.left_index}")
+                    self.task_manager.queue_task(
+                        frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
+                    )
+                self.data_version += 1
+                self.left_keypoint_changed.emit(self.left_index)
+            else:
+                title, hint = ERROR_CONTENT["missing_video"]
+                user_error(title, (hint + self.video))
 
     def set_right_keypoint(self, index: int, load_frame: bool = True):
         """
         Sets the right keypoint index, validates it, and optionally loads the frame.
         """
-        self.right_index = max(self.trim_start, min(index, self.trim_stop))
-        log.info(f"Setting right keypoint index to: {self.right_index}")
-        if load_frame and self.video:
-            log.info(f"Dispatching frame loader for right_index: {self.right_index}")
-            self.task_manager.queue_task(
-                frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
-            )
-        self.data_version += 1
-        self.right_keypoint_changed.emit(self.right_index)
+        if self.video:
+            if Path(self.video).exists():
+                self.right_index = max(self.trim_start, min(index, self.trim_stop))
+                log.info(f"Setting right keypoint index to: {self.right_index}")
+                if load_frame and self.video:
+                    log.info(f"Dispatching frame loader for right_index: {self.right_index}")
+                    self.task_manager.queue_task(
+                        frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
+                    )
+                self.data_version += 1
+                self.right_keypoint_changed.emit(self.right_index)
+            else:
+                title, hint = ERROR_CONTENT["missing_video"]
+                user_error(title, (hint + self.video))
 
     def left_frame_loaded(self, result: dict):
         first_frame_index = next(iter(result))

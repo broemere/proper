@@ -79,5 +79,9 @@ ERROR_CONTENT = {
     "negative_volume": (
         "Issue: Inner volume found to be negative.",
         "Report to developer."
+    ),
+    "missing_video": (
+        "Issue: Original video file not found in expected location.",
+        "To change a keypoint, ensure the video can be found at "
     )
 }
