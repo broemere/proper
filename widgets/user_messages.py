@@ -82,6 +82,6 @@ ERROR_CONTENT = {
     ),
     "missing_video": (
         "Issue: Original video file not found in expected location.",
-        "To change a keypoint, ensure the video can be found at "
+        "To change a keypoint, you must have the original video file. Use the Import Video button to reload it, or ensure the video can be found at "
     )
 }
