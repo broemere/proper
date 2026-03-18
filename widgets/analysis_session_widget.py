@@ -16,6 +16,7 @@ from tabs.area_tab import AreaTab
 from tabs.thickness_tab import ThicknessTab
 from tabs.export_tab import ExportTab
 from tabs.smoothing_tab import SmoothingTab
+from tabs.tpe_tab import TPETab
 import os
 
 log = logging.getLogger(__name__)
@@ -138,6 +139,8 @@ class AnalysisSessionWidget(QWidget):
         self.smoothing_tab = SmoothingTab(self.pipeline)
         self.smoothing_tab.help_requested.connect(self.help_requested)
         self.analysis_tabs.addTab(self.smoothing_tab, "〰️ Smoothing")
+        self.tpe_tab = TPETab(self.pipeline)
+        self.analysis_tabs.addTab(self.tpe_tab, "💥 TPEs")
         self.export_tab = ExportTab(self.pipeline)
         self.analysis_tabs.addTab(self.export_tab, "📦 Export")
 

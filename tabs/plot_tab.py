@@ -58,23 +58,6 @@ class PlotTab(QWidget):
         trim_layout.addWidget(btn_reset)
         controls_layout.addLayout(trim_layout)
 
-        # Zero controls
-        zero_methods = ["None", "First", "Min", "Median"]
-        zero_layout = QHBoxLayout()
-        zero_layout.setAlignment(Qt.AlignCenter)
-        zero_layout.addWidget(QLabel('Zero Method:'))
-        self.cb_zero = QComboBox()
-        self.cb_zero.addItems(zero_methods)
-        self.cb_zero.setCurrentText(self.pipeline.zeroing_method)
-        self.cb_zero.currentTextChanged.connect(self._apply_zeroing)
-        zero_layout.addWidget(self.cb_zero)
-        self.spin_zero_window = QSpinBox(minimum=0, maximum=999, value=7)
-        self.spin_zero_window.installEventFilter(self)
-        self.spin_zero_window.valueChanged.connect(self._apply_zeroing)
-        zero_layout.addWidget(QLabel('Window'))
-        zero_layout.addWidget(self.spin_zero_window)
-        controls_layout.addLayout(zero_layout)
-
         # Smooth controls
         smooth_methods = ["None", "Min", "Double Min", "Moving Avg", "Median", "Gaussian"]
         smooth_layout = QHBoxLayout()
@@ -91,6 +74,23 @@ class PlotTab(QWidget):
         smooth_layout.addWidget(QLabel('Window'))
         smooth_layout.addWidget(self.spin_smooth_window)
         controls_layout.addLayout(smooth_layout)
+
+        # Zero controls
+        zero_methods = ["None", "First", "Min", "Median"]
+        zero_layout = QHBoxLayout()
+        zero_layout.setAlignment(Qt.AlignCenter)
+        zero_layout.addWidget(QLabel('Zero Method:'))
+        self.cb_zero = QComboBox()
+        self.cb_zero.addItems(zero_methods)
+        self.cb_zero.setCurrentText(self.pipeline.zeroing_method)
+        self.cb_zero.currentTextChanged.connect(self._apply_zeroing)
+        zero_layout.addWidget(self.cb_zero)
+        self.spin_zero_window = QSpinBox(minimum=0, maximum=999, value=7)
+        self.spin_zero_window.installEventFilter(self)
+        self.spin_zero_window.valueChanged.connect(self._apply_zeroing)
+        zero_layout.addWidget(QLabel('Window'))
+        zero_layout.addWidget(self.spin_zero_window)
+        controls_layout.addLayout(zero_layout)
 
         tab_layout.addWidget(controls_widget)
 
