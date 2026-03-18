@@ -82,6 +82,7 @@ class DataPipeline(QObject):
         self.trimmed_data = {"t": [], "p": []}
         self.smoothed_data = {"t": [], "p": []}
         self.zeroed_data = {"t": [], "p": []}
+        self.analysis_data = {"t": [], "p"}
         self.csv_path = None
         self.video = None
         self.frame_count = 0
@@ -182,9 +183,21 @@ class DataPipeline(QObject):
             self.smoothed_data = smooth_data(self.trimmed_data, self.smoothing_method, self.smoothing_window + 1)
             # 3. Apply smoothing on the trimmed data.
             self.zeroed_data = zero_data(self.smoothed_data, self.zeroing_method, self.zeroing_window + 1)
+            self._update_analysis_data()
             self.data_version += 1
             self.transformed_data.emit([self.trimmed_data, self.smoothed_data,self.zeroed_data])
             print("Points plotted:", len(self.zeroed_data["p"]))
+
+    def _update_analysis_data(self):
+        """Slices the zeroed_data down to the specific analysis region."""
+        if not self.zeroed_data["p"]:
+            return
+
+        s = self.analysis_slice
+        self.analysis_data = {
+            "t": self.zeroed_data["t"][s],
+            "p": self.zeroed_data["p"][s]
+        }
 
     def set_trimming(self, start: int, stop: int):
         """
@@ -230,6 +243,20 @@ class DataPipeline(QObject):
             return self.frame_count
         else:
             return min(len(self.raw_data["t"]), self.frame_count)
+
+    @property
+    def analysis_slice(self) -> slice:
+        """
+        Creates a safe Python slice object for the zeroed_data array based
+        on the user's left and right keypoints.
+        """
+        # Convert absolute left/right bounds to relative indices
+        # (relative to the start of zeroed_data)
+        rel_left = max(0, self.left_index - self.trim_start)
+        rel_right = self.right_index - self.trim_start
+
+        # Python slices are exclusive at the stop index, so we add 1
+        return slice(rel_left, rel_right + 1)
 
     # endregion
 
@@ -497,15 +524,19 @@ class DataPipeline(QObject):
         if self.video:
             if Path(self.video).exists():
                 # Validate and clamp the index to be within the current trim range
-                self.left_index = max(self.trim_start, min(index, self.trim_stop))
-                log.info(f"Setting left keypoint index to: {self.left_index}")
-                if load_frame and self.video:
-                    log.info(f"Dispatching frame loader for left_index: {self.left_index}")
-                    self.task_manager.queue_task(
-                        frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
-                    )
-                self.data_version += 1
-                self.left_keypoint_changed.emit(self.left_index)
+                clamped_index = max(self.trim_start, min(index, self.right_index))
+                #self.left_index = max(self.trim_start, min(index, self.trim_stop))
+                if self.left_index != clamped_index:
+                    self.left_index = clamped_index
+                    log.info(f"Setting left keypoint index to: {self.left_index}")
+                    if load_frame and self.video:
+                        log.info(f"Dispatching frame loader for left_index: {self.left_index}")
+                        self.task_manager.queue_task(
+                            frame_loader, self.video, [self.left_index], on_result=self.left_frame_loaded
+                        )
+                    self._update_analysis_data()
+                    self.data_version += 1
+                    self.left_keypoint_changed.emit(self.left_index)
             else:
                 title, hint = ERROR_CONTENT["missing_video"]
                 user_error(title, (hint + self.video))
@@ -516,15 +547,19 @@ class DataPipeline(QObject):
         """
         if self.video:
             if Path(self.video).exists():
-                self.right_index = max(self.trim_start, min(index, self.trim_stop))
-                log.info(f"Setting right keypoint index to: {self.right_index}")
-                if load_frame and self.video:
-                    log.info(f"Dispatching frame loader for right_index: {self.right_index}")
-                    self.task_manager.queue_task(
-                        frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
-                    )
-                self.data_version += 1
-                self.right_keypoint_changed.emit(self.right_index)
+                clamped_index = max(self.left_index, min(index, self.trim_stop))
+                #self.right_index = max(self.trim_start, min(index, self.trim_stop))
+                if self.right_index != clamped_index:
+                    self.right_index = clamped_index
+                    log.info(f"Setting right keypoint index to: {self.right_index}")
+                    if load_frame and self.video:
+                        log.info(f"Dispatching frame loader for right_index: {self.right_index}")
+                        self.task_manager.queue_task(
+                            frame_loader, self.video, [self.right_index], on_result=self.right_frame_loaded
+                        )
+                    self._update_analysis_data()
+                    self.data_version += 1
+                    self.right_keypoint_changed.emit(self.right_index)
             else:
                 title, hint = ERROR_CONTENT["missing_video"]
                 user_error(title, (hint + self.video))
@@ -586,11 +621,11 @@ class DataPipeline(QObject):
         if not self.csv_path or "p" not in self.zeroed_data:
             return {"pre": "", "current": "0.00", "post": ""}
         # All the slicing and formatting logic is now here
-        new_index = max(0, index - self.trim_start)
+        rel_index = max(0, index - self.trim_start)
         p_data = self.zeroed_data["p"]
-        pre_vals = p_data[max(0, new_index - 3):new_index]
-        current_val = p_data[new_index]
-        post_vals = p_data[new_index+1:new_index+4]
+        pre_vals = p_data[max(0, rel_index - 3):rel_index]
+        current_val = p_data[rel_index]
+        post_vals = p_data[rel_index+1:rel_index+4]
         return {
             "pre": ", ".join(f"{x:.2f}" for x in pre_vals),
             "current": f"{current_val:.2f}",
@@ -1154,9 +1189,9 @@ class DataPipeline(QObject):
         self.t_left = self.solve_initial_thickness(self.ra_left, self.rb_left, self.v_int_left)
 
         frames = np.arange(self.left_index, self.right_index+1)
-        start = self.left_index - self.trim_start
-        stop = self.right_index - self.trim_start + 1
-        p_zeroed = self.zeroed_data["p"][start:stop]
+        p_analysis = np.array(self.analysis_data["p"])
+        if len(p_analysis) != len(frames):
+            raise ValueError(f"Data length mismatch: {len(p_analysis)} pressures vs {len(frames)} frames.")
         thickness = np.linspace(self.t_left, self.t_final, len(frames))  # Assume linear !!!
         # More physically correct equation for thickness. t(V) = t_final * (V_final^(2/3)) / V^(2/3)
         thickness_true = self.t_final * (self.v_ext_right**(2/3)) / (np.linspace(self.v_ext_left, self.v_ext_right, len(frames))**(2/3))
@@ -1174,21 +1209,21 @@ class DataPipeline(QObject):
 
         self.stretch = diameter / diameter[0]
         stretch_true = diameter_true / diameter_true[0]
-        self.stress = (np.array(p_zeroed) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
-        stress_true = (np.array(p_zeroed) * self.MMHG2KPA) * (diameter_true / 2) / (2 * thickness_true)
+        self.stress = (np.array(p_analysis) * self.MMHG2KPA) * (diameter / 2) / (2 * thickness)
+        stress_true = (np.array(p_analysis) * self.MMHG2KPA) * (diameter_true / 2) / (2 * thickness_true)
 
         ras = np.linspace(self.ra_left, self.ra_right, len(frames))
         rbs = np.linspace(self.rb_left, self.rb_right, len(frames))
 
-        stress_crown = (np.array(p_zeroed) * self.MMHG2KPA) * (ras ** 2) / (2 * thickness * rbs) # plot with stretch_b
+        stress_crown = (np.array(p_analysis) * self.MMHG2KPA) * (ras ** 2) / (2 * thickness * rbs) # plot with stretch_b
 
-        stress_equator_1 = (np.array(p_zeroed) * self.MMHG2KPA) * ras / (2 * thickness)
-        stress_equator_2 = ((np.array(p_zeroed) * self.MMHG2KPA) * ras / thickness) * (1 - ((ras ** 2) / (2 * rbs ** 2)))
+        stress_equator_1 = (np.array(p_analysis) * self.MMHG2KPA) * ras / (2 * thickness)
+        stress_equator_2 = ((np.array(p_analysis) * self.MMHG2KPA) * ras / thickness) * (1 - ((ras ** 2) / (2 * rbs ** 2)))
 
         stretch_a = ras / ras[0]
         stretch_b = rbs / rbs[0]
 
-        return frames, start, stop, thickness, volume, diameter, p_zeroed#, thickness_true, stress_true, stretch_true
+        return frames, start, stop, thickness, volume, diameter, p_analysis#, thickness_true, stress_true, stretch_true
 
     def calculate_stiffness_at_poi(self, p_zeroed):
         """Calculates stiffness and related metrics at pressures of interest."""
