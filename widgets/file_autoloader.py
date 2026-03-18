@@ -13,8 +13,8 @@ def find_and_prompt_for_video(parent: QWidget, csv_path: str) -> str | None:
 
     reply = QMessageBox.question(
         parent,
-        "Load video?",
-        f"Found a matching video file:\n\n{video_path.parent}\n\n{video_path.name}\n\nWould you like to load it?",
+        "Import video?",
+        f"Found a matching video file:\n\n{video_path.parent}\n\n{video_path.name}\n\nWould you like to import it?",
         QMessageBox.Yes | QMessageBox.No,
         QMessageBox.No
     )
@@ -30,8 +30,8 @@ def find_and_prompt_for_csv(parent: QWidget, video_path: str) -> str | None:
 
     reply = QMessageBox.question(
         parent,
-        "Load CSV?",
-        f"Found a matching data file:\n\n{csv_path.parent}\n\n{csv_path.name}\n\nWould you like to load it?",
+        "Import CSV?",
+        f"Found a matching data file:\n\n{csv_path.parent}\n\n{csv_path.name}\n\nWould you like to import it?",
         QMessageBox.Yes | QMessageBox.No,
         QMessageBox.No
     )

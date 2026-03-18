@@ -217,7 +217,7 @@ class AnalysisSessionWidget(QWidget):
 
     def _handle_csv_load(self, path: str):
         """Single source of truth for loading a CSV file within this session."""
-        log.info(f"HANDLER: Loading CSV {path} for session.")
+        log.info(f"HANDLER: Importing CSV {path} for session.")
         self.pipeline.load_csv_file(path)
         self.file_pickers.set_csv_label(path)
 
@@ -239,7 +239,7 @@ class AnalysisSessionWidget(QWidget):
 
     def _handle_video_load(self, path: str):
         """Single source of truth for loading a video file within this session."""
-        log.info(f"HANDLER: Loading Video {path} for session.")
+        log.info(f"HANDLER: Importing Video {path} for session.")
         self.pipeline.load_video_file(path)
         self.file_pickers.set_video_label(path)
 
