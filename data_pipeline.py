@@ -82,7 +82,7 @@ class DataPipeline(QObject):
         self.trimmed_data = {"t": [], "p": []}
         self.smoothed_data = {"t": [], "p": []}
         self.zeroed_data = {"t": [], "p": []}
-        self.analysis_data = {"t": [], "p"}
+        self.analysis_data = {"t": [], "p": []}
         self.csv_path = None
         self.video = None
         self.frame_count = 0
@@ -190,7 +190,7 @@ class DataPipeline(QObject):
 
     def _update_analysis_data(self):
         """Slices the zeroed_data down to the specific analysis region."""
-        if not self.zeroed_data["p"]:
+        if len(self.zeroed_data["p"]) == 0:
             return
 
         s = self.analysis_slice
@@ -1223,7 +1223,7 @@ class DataPipeline(QObject):
         stretch_a = ras / ras[0]
         stretch_b = rbs / rbs[0]
 
-        return frames, start, stop, thickness, volume, diameter, p_analysis#, thickness_true, stress_true, stretch_true
+        return frames, thickness, volume, diameter #, thickness_true, stress_true, stretch_true
 
     def calculate_stiffness_at_poi(self, p_zeroed):
         """Calculates stiffness and related metrics at pressures of interest."""
@@ -1262,26 +1262,33 @@ class DataPipeline(QObject):
         Public method to perform all calculations and generate a detailed
         CSV report and summary data.
         """
-        frames, start, stop, thickness, volume, diameter, p_zeroed = self.get_stress_stretch()
-        stiffness_data = self.calculate_stiffness_at_poi(p_zeroed)
-        interval_data = self.calculate_intervals(p_zeroed)
+        # 1. Grab only the calculated physics data and frames
+        frames, thickness, volume, diameter = self.get_stress_stretch()
 
-        # Prepare data for CSV
+        # 2. Pull our trusted analysis pressure directly from the class state
+        p_analysis = np.array(self.analysis_data["p"])
+
+        stiffness_data = self.calculate_stiffness_at_poi(p_analysis)
+        interval_data = self.calculate_intervals(p_analysis)
+
         num_frames = len(frames)
+
+        # 3. Grab our universal slice to align the historical pipeline data
+        s = self.analysis_slice
+
         report_data = {
             "frame": frames,
-            "t_trimmed": self.trimmed_data["t"][start:stop],
-            "p_trimmed": self.trimmed_data["p"][start:stop],
-            "p_smoothed": self.smoothed_data["p"][start:stop],
-            "p_zeroed(mmHg)": self.zeroed_data["p"][start:stop],
+            # Slice historical data perfectly to match
+            "t_trimmed": self.trimmed_data["t"][s],
+            "p_trimmed": self.trimmed_data["p"][s],
+            "p_smoothed": self.smoothed_data["p"][s],
+            # We can use our final analysis_data directly here!
+            "p_zeroed(mmHg)": self.analysis_data["p"],
             "thickness(mm)": thickness,
             "diameter(midwall)": diameter,
             "v_inner(mm3)": volume,
             "stretch": self.stretch,
             "stress(kpa)": self.stress,
-            # "stress_true": stress_true,
-            # "stretch_true": stretch_true,
-            # "thickness_true": thickness_true,
         }
 
         # Unpack stiffness data into columns

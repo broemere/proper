@@ -179,6 +179,8 @@ class FrameTab(QWidget):
         # --- Local UI Connections (No Data Logic) ---
         self.left_goto_button.clicked.connect(self._goto_left)
         self.right_goto_button.clicked.connect(self._goto_right)
+        self.left_goto.lineEdit().returnPressed.connect(self._goto_left)
+        self.right_goto.lineEdit().returnPressed.connect(self._goto_right)
         self.left_slider.valueChanged.connect(self.left_spin.setValue)
         self.left_spin.valueChanged.connect(self.left_slider.setValue)
         self.right_slider.valueChanged.connect(self.right_spin.setValue)
