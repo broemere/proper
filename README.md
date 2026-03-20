@@ -8,6 +8,8 @@
   Fast data analysis app custom-made for PRIM data.
   <br>
   <br>
+  <a href="https://github.com/broemere/proper/releases/download/v0.8.5/PROPER_User_Guide_v0.8.5.pdf">User Guide</a>
+  -
   <a href="https://pubmed.ncbi.nlm.nih.gov/37249760/">PRIM Device</a>
   -
   <a href="http://www.tykocki-lab.com/">Tykocki Lab</a>
