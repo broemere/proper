@@ -143,6 +143,9 @@ class DataPipeline(QObject):
 
         self.s_value = 0
 
+        # TPE Tab
+        self.wave_data = {}
+
         # EXPORT TAB
         self.n_ellipses = 0
         self.exported_file = None
@@ -1320,6 +1323,12 @@ class DataPipeline(QObject):
         v_wall_col = np.full(num_frames, np.nan)
         v_wall_col[0] = self.v_wall
         report_data["v_wall(mm3)"] = v_wall_col
+
+        if self.wave_data:
+            for k, v in self.wave_data.items():
+                report_col = np.full(num_frames, np.nan)
+                report_col[0] = v
+                report_data[k] = report_col
 
         self.write_csv_report(report_data, num_frames)
         self.emit_results_to_ui(report_data, num_frames)

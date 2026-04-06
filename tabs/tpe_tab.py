@@ -13,6 +13,7 @@ class TPETab(QWidget):
     bounds_updated = Signal(float, float)
     params_updated = Signal(float, float)  # New: Emits (min_distance_sec, prominence_multiplier)
     energy_updated = Signal(float, list)
+    wave_data_updated = Signal(dict)
 
     def __init__(self, pipeline: DataPipeline, parent=None):
         super().__init__(parent)
@@ -109,8 +110,8 @@ class TPETab(QWidget):
         self.lbl_freq = QLabel("Median Frequency: -- Hz")
         self.lbl_rate = QLabel("Median Rate: -- waves/min")
         self.lbl_period = QLabel("Median Period: -- s")
-        self.lbl_amp_mean = QLabel("Mean Amp: -- mmHg")
-        self.lbl_amp_med = QLabel("Median Amp: -- mmHg")
+        self.lbl_amp_mean = QLabel("Mean Peak-to-Peak Amp: -- mmHg")
+        self.lbl_amp_med = QLabel("Median Peak-to-Peak Amp: -- mmHg")
         self.lbl_slope_mean = QLabel("Mean Leading Slope: -- mmHg/s")
         self.lbl_slope_med = QLabel("Median Leading Slope: -- mmHg/s")
 
@@ -341,13 +342,31 @@ class TPETab(QWidget):
             amp = p_sliced[peak_idx] - p_sliced[trough_idx]
             amplitudes.append(amp)
 
-            # B. Leading Slope (Max dP/dt)
+            # B. Leading Slope (20-80% Linear Regression)
+            trough_val = p_sliced[trough_idx]
+
+            # Calculate absolute Y-values for the 20% and 80% marks of this specific wave
+            thresh_20 = trough_val + 0.20 * amp
+            thresh_80 = trough_val + 0.80 * amp
+
+            # Extract the raw leading edge
             t_edge = t_sliced_sec[trough_idx:peak_idx + 1]
             p_edge = p_sliced[trough_idx:peak_idx + 1]
 
-            if len(t_edge) > 1:
-                dp_dt = np.diff(p_edge) / np.diff(t_edge)
-                max_slopes.append(np.max(dp_dt))
+            # Mask the data to only include points within the 20-80% amplitude band
+            window_mask = (p_edge >= thresh_20) & (p_edge <= thresh_80)
+            t_window = t_edge[window_mask]
+            p_window = p_edge[window_mask]
+
+            # Fit a line (degree 1 polynomial) if we caught enough data points in the window
+            if len(t_window) > 1:
+                slope, intercept = np.polyfit(t_window, p_window, 1)
+                max_slopes.append(slope)
+            elif len(t_edge) > 1:
+                # Fallback: If the sample rate is too low and the discrete data points
+                # bypass the 20-80% window entirely, calculate the overall slope from trough to peak.
+                fallback_slope = (p_edge[-1] - p_edge[0]) / (t_edge[-1] - t_edge[0])
+                max_slopes.append(fallback_slope)
 
         # --- 6. Update the Dashboard Text ---
         self.lbl_count.setText(f"Wave Count: {wave_count}")
@@ -356,9 +375,21 @@ class TPETab(QWidget):
         self.lbl_period.setText(f"Median Period: {period_sec:.2f} s")
 
         if amplitudes:
-            self.lbl_amp_mean.setText(f"Mean Amp: {np.mean(amplitudes):.2f} mmHg")
-            self.lbl_amp_med.setText(f"Median Amp: {np.median(amplitudes):.2f} mmHg")
+            self.lbl_amp_mean.setText(f"Mean Peak-to-Peak Amp: {np.mean(amplitudes):.2f} mmHg")
+            self.lbl_amp_med.setText(f"Median Peak-to-Peak Amp: {np.median(amplitudes):.2f} mmHg")
 
         if max_slopes:
             self.lbl_slope_mean.setText(f"Mean Leading Slope: {np.mean(max_slopes):.2f} mmHg/s")
             self.lbl_slope_med.setText(f"Median Leading Slope: {np.median(max_slopes):.2f} mmHg/s")
+
+        wave_data = {
+                     "mean_p2p_amp(mmHg)": np.mean(amplitudes),
+                     "median_p2p_amp(mmHg)": np.median(amplitudes),
+                     "mean_leading_slope(mmHg/s)": np.mean(max_slopes),
+                     "median_leading_slope(mmHg/s)": np.median(max_slopes),
+                    "freq(Hz)": freq_hz,
+                    "waves_per_min": waves_per_min,
+                    "period(s)": period_sec,
+                    "wave_count": wave_count,
+        }
+        self.pipeline.wave_data = wave_data
