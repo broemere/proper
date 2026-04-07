@@ -145,6 +145,11 @@ class DataPipeline(QObject):
 
         # TPE Tab
         self.wave_data = {}
+        self.tpe_onset_time = 0
+        self.tpe_end_time = -1
+        self.excluded_waves = set()
+        self.tpe_distance = 4
+        self.tpe_prominence = 0.5
 
         # EXPORT TAB
         self.n_ellipses = 0

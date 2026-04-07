@@ -385,6 +385,10 @@ def serialize_objects(obj):
         return {
             "__OrderedDict__": [[k, serialize_objects(v)] for k, v in obj.items()]
         }
+    elif isinstance(obj, set):
+        return {
+            "__set__": [serialize_objects(v) for v in obj]
+        }
     elif isinstance(obj, dict):
         return {k: serialize_objects(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -418,7 +422,12 @@ def deserialize_objects(obj):
         # Rebuild the OrderedDict from the list of [key, value] pairs
         return OrderedDict([(k, deserialize_objects(v)) for k, v in obj["__OrderedDict__"]])
 
-    # 4) Try to turn pure numeric lists into arrays
+    # 4) Reverse of encoded set
+    if isinstance(obj, dict) and "__set__" in obj:
+        # Rebuild the set from the list
+        return set(deserialize_objects(v) for v in obj["__set__"])
+
+    # 5) Try to turn pure numeric lists into arrays
     if isinstance(obj, list):
         try:
             arr = np.array(obj)
@@ -430,11 +439,11 @@ def deserialize_objects(obj):
         # otherwise, recurse into each element
         return [deserialize_objects(v) for v in obj]
 
-    # 5) Recurse into plain dicts
+    # 6) Recurse into plain dicts
     if isinstance(obj, dict):
         return {k: deserialize_objects(v) for k, v in obj.items()}
 
-    # 6) Leave everything else alone
+    # 7) Leave everything else alone
     return obj
 
 def format_value(value: float) -> str:

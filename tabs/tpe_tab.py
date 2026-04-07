@@ -10,9 +10,6 @@ from scipy.signal import find_peaks
 log = logging.getLogger(__name__)
 
 class TPETab(QWidget):
-    bounds_updated = Signal(float, float)
-    params_updated = Signal(float, float)  # New: Emits (min_distance_sec, prominence_multiplier)
-    energy_updated = Signal(float, list)
     wave_data_updated = Signal(dict)
 
     def __init__(self, pipeline: DataPipeline, parent=None):
@@ -43,17 +40,17 @@ class TPETab(QWidget):
 
         self.highpass_curve.setZValue(2)
 
-        # NEW: Scatter plot layer for the detected peaks
-        self.peak_scatter = self.data_plot.plot(
-            [], [],
-            pen=None,  # Don't draw lines connecting the dots
-            symbol='o',  # Circle symbol
-            symbolSize=8,  # Size of the dot
-            symbolBrush='#ff007f',  # Bright pink fill to stand out
-            symbolPen='w',  # White outline for contrast
+        # NEW: Explicit ScatterPlotItem to allow clicking and per-point data
+        self.peak_scatter = pg.ScatterPlotItem(
+            size=10,
+            pen=pg.mkPen('w'),
+            hoverable=True,
+            hoverSymbol='s',  # Turns into a square on hover so the user knows it's clickable
+            hoverSize=12,
             name="Detected Peaks"
         )
         self.peak_scatter.setZValue(3)  # Ensure dots draw ON TOP of all the lines
+        self.data_plot.addItem(self.peak_scatter)
 
         # Dummy plots strictly to force the InfiniteLines into the legend
         self.data_plot.plot([], [], pen=pg.mkPen('#ff0000', width=2, style=Qt.DashLine), name="Analysis Start")
@@ -84,13 +81,13 @@ class TPETab(QWidget):
         self.spin_dist = QDoubleSpinBox()
         self.spin_dist.setRange(0.1, 20.0)
         self.spin_dist.setSingleStep(0.5)
-        self.spin_dist.setValue(4.0)  # Default 4 seconds
+        self.spin_dist.setValue(self.pipeline.tpe_distance)  # Default 4 seconds
         self.spin_dist.setSuffix(" s")
 
         self.spin_prom = QDoubleSpinBox()
         self.spin_prom.setRange(0.01, 5.0)
         self.spin_prom.setSingleStep(0.1)
-        self.spin_prom.setValue(0.5)  # Default 0.5x STD
+        self.spin_prom.setValue(self.pipeline.tpe_prominence)  # Default 0.5x STD
         self.spin_prom.setPrefix("x")
 
         control_layout.addWidget(QLabel("Min Peak Distance:"))
@@ -99,6 +96,8 @@ class TPETab(QWidget):
         control_layout.addWidget(QLabel("Prominence Threshold (x STD):"))
         control_layout.addWidget(self.spin_prom)
         control_layout.addStretch()
+        self.pressure_range = QLabel("Pressure Range: -- mmHg")
+        control_layout.addWidget(self.pressure_range)
 
         group_layout.addLayout(control_layout)
 
@@ -142,19 +141,36 @@ class TPETab(QWidget):
         self.offset_line_main.sigPositionChangeFinished.connect(self._on_bounds_dragged)
         self.spin_dist.valueChanged.connect(self._on_params_changed)
         self.spin_prom.valueChanged.connect(self._on_params_changed)
+        self.peak_scatter.sigClicked.connect(self._on_peak_clicked)
+
+    def _on_peak_clicked(self, plot, points):
+        """NEW: Toggles a wave's exclusion status when clicked"""
+        if not points:
+            return
+
+        clicked_point = points[0]
+        peak_id = clicked_point.data()  # Get the underlying index we assigned
+
+        if peak_id is None:
+            return
+
+        if peak_id in self.pipeline.excluded_waves:
+            self.pipeline.excluded_waves.remove(peak_id)
+        else:
+            self.pipeline.excluded_waves.add(peak_id)
+
+        # Re-run metrics to apply the filter and update dot colors immediately
+        self._calculate_wave_metrics(self.onset_line_main.value(), self.offset_line_main.value())
 
     def _on_params_changed(self):
         """Emits new parameters and recalculates metrics based on current bounds."""
+        self.pipeline.excluded_waves.clear()  # Clear state on param change
         dist_val = self.spin_dist.value()
         prom_val = self.spin_prom.value()
-
         # 1. Emit to the pipeline
-        self.params_updated.emit(dist_val, prom_val)
-
-        # 2. Recalculate everything in place
-        start_t = self.onset_line_main.value()
-        end_t = self.offset_line_main.value()
-        self._calculate_wave_metrics(start_t, end_t)
+        self.pipeline.tpe_distance = dist_val
+        self.pipeline.tpe_prominence = prom_val
+        self._calculate_wave_metrics(self.onset_line_main.value(), self.offset_line_main.value())
 
     def _on_bounds_dragged(self):
         """Called when the user finishes dragging either the start or end line."""
@@ -167,7 +183,7 @@ class TPETab(QWidget):
             self.onset_line_main.setValue(start_t)
 
         # 3. Emit the updated bounds back to the pipeline/backend
-        self.bounds_updated.emit(start_t, end_t)
+        self.pipeline.excluded_waves.clear()  # Clear state on bound drag
         print(f"User manually updated bounds: Start={start_t:.2f}m, End={end_t:.2f}m")
         self._calculate_wave_metrics(start_t, end_t)
 
@@ -204,37 +220,15 @@ class TPETab(QWidget):
         p_lowpass = filtfilt(b, a, p)
         p_highpass = p - p_lowpass
 
-        # --- STEP 3: Rolling Variance (Energy) ---
-        # 1. Square the high-pass signal
-        squared_signal = p_highpass ** 2
-
-        # 2. Apply a moving average (e.g., 10-second window)
-        window_sec = 10.0
-        window_pts = max(1, int(window_sec * fs))
-        kernel = np.ones(window_pts) / window_pts
-        rolling_energy = np.convolve(squared_signal, kernel, mode='same')
-
-        # --- STEP 4: Threshold & Trigger ---
-        quiet_pts = int(60.0 * fs)
-        onset_time = 0.0
-
-        if quiet_pts < len(rolling_energy):
-            noise_mean = np.mean(rolling_energy[:quiet_pts])
-            noise_std = np.std(rolling_energy[:quiet_pts])
-
-            threshold = noise_mean + (200 * noise_std)
-            #self.threshold_line.setValue(threshold)
-
-            trigger_indices = np.where(rolling_energy[quiet_pts:] > threshold)[0]
-
-            if len(trigger_indices) > 0:
-                onset_idx = quiet_pts + trigger_indices[0]
-                onset_time = t_mins[onset_idx]
-            else:
-                onset_time = t_mins[0]  # Fallback if no waves detected
+        onset_time = self.pipeline.tpe_onset_time
 
         # Set the end time to the absolute final frame of the data
-        end_time = t_mins[-1]
+        if self.pipeline.tpe_end_time == -1:
+            end_time = t_mins[-1]
+        else:
+            if self.pipeline.tpe_end_time > max(t_mins):
+                self.pipeline.tpe_end_time = t_mins[-1]
+            end_time = self.pipeline.tpe_end_time
 
         # 1. Plot all the continuous curves
         self.trim_curve.setData(t_mins, p)
@@ -246,10 +240,9 @@ class TPETab(QWidget):
         self.offset_line_main.setValue(end_time)
 
         # 3. Emit the initial guess to the pipeline immediately
-        self.bounds_updated.emit(onset_time, end_time)
+        self.pipeline.excluded_waves.clear()  # Clear state on new data
         print(f"Initial bounds automatically emitted: Start={onset_time:.2f}m, End={end_time:.2f}m")
         self._calculate_wave_metrics(onset_time, end_time)
-        self.params_updated.emit(self.spin_dist.value(), self.spin_prom.value())
 
     def _data_transformed(self, data: list):
         trimmed_data, smoothed_data, zeroed_data = data
@@ -260,8 +253,12 @@ class TPETab(QWidget):
         from scipy.signal import find_peaks
         import numpy as np
 
+        self.pipeline.tpe_onset_time = start_t_min
+        self.pipeline.tpe_end_time = end_t_min
+
         # 1. Grab the currently plotted data from the high-pass curve
         t_mins, p_wave = self.highpass_curve.getData()
+        _, p_lowpass = self.lowpass_curve.getData()  # Time axes are identical
 
         if t_mins is None or len(t_mins) == 0:
             return
@@ -270,9 +267,15 @@ class TPETab(QWidget):
         mask = (t_mins >= start_t_min) & (t_mins <= end_t_min)
         t_sliced_min = t_mins[mask]
         p_sliced = p_wave[mask]
+        p_lowpass_sliced = p_lowpass[mask]
 
         if len(p_sliced) < 10:
             return
+
+        start_p_val = p_lowpass_sliced[0]
+        end_p_val = p_lowpass_sliced[-1]
+
+        self.pressure_range.setText(f"Pressure Range: {start_p_val:.2f} to {end_p_val:.2f} mmHg")
 
         # Convert time to seconds for standard Hz and dP/dt units
         t_sliced_sec = t_sliced_min * 60.0
@@ -287,35 +290,45 @@ class TPETab(QWidget):
         min_distance_idx = max(1, int(dist_sec * fs))
         std_p = np.std(p_sliced)
 
-        # Find the validated peaks using our UI parameters
+        # 1. Find ALL peaks
         peaks, _ = find_peaks(
             p_sliced,
             prominence=(prom_mult * std_p),
             distance=min_distance_idx
         )
 
-        wave_count = len(peaks)
+        total_detected_count = len(peaks)
 
-        # --- Update the visual dots instantly ---
-        if wave_count > 0:
+        # 2. Assign colors based on exclusion state and draw all dots
+        if total_detected_count > 0:
             t_peaks = t_sliced_min[peaks]
-            p_peaks = p_sliced[peaks] + 0.75  # Hover slightly above the wave
-            self.peak_scatter.setData(t_peaks, p_peaks)
+            p_peaks = p_sliced[peaks] + 0.75
+
+            brushes = []
+            for i in range(total_detected_count):
+                if i in self.pipeline.excluded_waves:
+                    brushes.append(pg.mkBrush(color=(128, 128, 128, 200)))  # Grayed out
+                else:
+                    brushes.append(pg.mkBrush('#ff007f'))  # Active pink
+
+            # Inject the array index 'i' into the 'data' kwarg so we can retrieve it on click
+            self.peak_scatter.setData(t_peaks, p_peaks, brush=brushes, data=np.arange(total_detected_count))
         else:
             self.peak_scatter.setData([], [])
-        # Failsafe for math
+
+        # 3. Create the valid subset for math
+        valid_peaks = [p for i, p in enumerate(peaks) if i not in self.pipeline.excluded_waves]
+        wave_count = len(valid_peaks)
+
         if wave_count < 2:
-            self.lbl_count.setText("Wave Count: Not enough waves")
+            self.lbl_count.setText("Wave Count: Not enough valid waves")
             self.lbl_freq.setText("Frequency: -- Hz")
             self.lbl_rate.setText("Rate: -- waves/min")
             self.lbl_period.setText("Period: -- s")
             return
 
-        # --- 4. NEW: Robust Frequency via Median Peak-to-Peak Interval ---
-        # Calculate the time difference (in seconds) between every consecutive valid peak
-        peak_intervals_sec = np.diff(t_sliced_sec[peaks])
-
-        # The median perfectly ignores the massive 2x time gaps left by missing waves
+        # 4. Math applies strictly to valid_peaks
+        peak_intervals_sec = np.diff(t_sliced_sec[valid_peaks])
         period_sec = float(np.median(peak_intervals_sec))
         freq_hz = 1.0 / period_sec if period_sec > 0 else 0.0
         waves_per_min = freq_hz * 60.0
@@ -323,52 +336,40 @@ class TPETab(QWidget):
         amplitudes = []
         max_slopes = []
 
-        # --- 5. Extract Amplitude and Slope ---
-        # We only need the troughs for the vertical measurements, not time.
-        for i in range(len(peaks)):
-            peak_idx = peaks[i]
+        for i in range(len(valid_peaks)):
+            peak_idx = valid_peaks[i]
 
-            # Limit the backward search to the previous peak (or start of slice)
-            start_search = peaks[i - 1] if i > 0 else 0
+            # Searching back to the previous VALID peak ensures we find the global trough
+            # even if there's a noisy bump we excluded between them.
+            start_search = valid_peaks[i - 1] if i > 0 else 0
 
             if start_search == peak_idx:
                 continue
 
-            # Find the lowest point strictly between the previous peak and this peak
             trough_rel_idx = np.argmin(p_sliced[start_search:peak_idx])
             trough_idx = start_search + trough_rel_idx
 
-            # A. Amplitude (Peak-to-Trough)
             amp = p_sliced[peak_idx] - p_sliced[trough_idx]
             amplitudes.append(amp)
 
-            # B. Leading Slope (20-80% Linear Regression)
             trough_val = p_sliced[trough_idx]
-
-            # Calculate absolute Y-values for the 20% and 80% marks of this specific wave
             thresh_20 = trough_val + 0.20 * amp
             thresh_80 = trough_val + 0.80 * amp
 
-            # Extract the raw leading edge
             t_edge = t_sliced_sec[trough_idx:peak_idx + 1]
             p_edge = p_sliced[trough_idx:peak_idx + 1]
 
-            # Mask the data to only include points within the 20-80% amplitude band
             window_mask = (p_edge >= thresh_20) & (p_edge <= thresh_80)
             t_window = t_edge[window_mask]
             p_window = p_edge[window_mask]
 
-            # Fit a line (degree 1 polynomial) if we caught enough data points in the window
             if len(t_window) > 1:
                 slope, intercept = np.polyfit(t_window, p_window, 1)
                 max_slopes.append(slope)
             elif len(t_edge) > 1:
-                # Fallback: If the sample rate is too low and the discrete data points
-                # bypass the 20-80% window entirely, calculate the overall slope from trough to peak.
                 fallback_slope = (p_edge[-1] - p_edge[0]) / (t_edge[-1] - t_edge[0])
                 max_slopes.append(fallback_slope)
 
-        # --- 6. Update the Dashboard Text ---
         self.lbl_count.setText(f"Wave Count: {wave_count}")
         self.lbl_freq.setText(f"Median Frequency: {freq_hz:.3f} Hz")
         self.lbl_rate.setText(f"Median Rate: {waves_per_min:.2f} waves/min")
@@ -383,13 +384,13 @@ class TPETab(QWidget):
             self.lbl_slope_med.setText(f"Median Leading Slope: {np.median(max_slopes):.2f} mmHg/s")
 
         wave_data = {
-                     "mean_p2p_amp(mmHg)": np.mean(amplitudes),
-                     "median_p2p_amp(mmHg)": np.median(amplitudes),
-                     "mean_leading_slope(mmHg/s)": np.mean(max_slopes),
-                     "median_leading_slope(mmHg/s)": np.median(max_slopes),
-                    "freq(Hz)": freq_hz,
-                    "waves_per_min": waves_per_min,
-                    "period(s)": period_sec,
-                    "wave_count": wave_count,
+            "mean_p2p_amp(mmHg)": np.mean(amplitudes),
+            "median_p2p_amp(mmHg)": np.median(amplitudes),
+            "mean_leading_slope(mmHg/s)": np.mean(max_slopes),
+            "median_leading_slope(mmHg/s)": np.median(max_slopes),
+            "freq(Hz)": freq_hz,
+            "waves_per_min": waves_per_min,
+            "period(s)": period_sec,
+            "wave_count": wave_count,
         }
         self.pipeline.wave_data = wave_data
