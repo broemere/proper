@@ -86,7 +86,7 @@ ERROR_CONTENT = {
     ),
     "large_area": (
         "Warning: An area is more than twice the size of the smallest area.",
-        "Double check the areas in the Area tab to ensure the thresholding and area selection is accurate."
+        "Double check the areas to ensure the thresholding and area selection is accurate."
     ),
     "large_v_inner_0": (
         "Warning: Initial v_inner is large. Is this a large bladder?",
