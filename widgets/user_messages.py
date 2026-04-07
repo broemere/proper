@@ -83,5 +83,18 @@ ERROR_CONTENT = {
     "missing_video": (
         "Issue: Original video file not found in expected location.",
         "To change a keypoint, you must have the original video file. Use the Import Video button to reload it, or ensure the video can be found at "
-    )
+    ),
+    "large_area": (
+        "Warning: An area is more than twice the size of the smallest area.",
+        "Double check the areas in the Area tab to ensure the thresholding and area selection is accurate."
+    ),
+    "large_v_inner_0": (
+        "Warning: Initial v_inner is large. Is this a large bladder?",
+        "Initial v_inner is typically between 10-100 mm³. Ensure your analysis looks correct."
+    ),
+    "warning_v_wall": (
+        "Warning: v_wall is ",
+        "v_wall is typically between 8-50 mm³. Ensure your analysis looks correct."
+    ),
+
 }

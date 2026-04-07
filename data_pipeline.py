@@ -149,6 +149,7 @@ class DataPipeline(QObject):
         # EXPORT TAB
         self.n_ellipses = 0
         self.exported_file = None
+        self.export_selection = "all"
 
 
     ### region CSV handling
@@ -988,6 +989,8 @@ class DataPipeline(QObject):
             middle_blob_id = unlabeled_blobs[0][0]
             data_store[middle_blob_id][3] = "Middle"
 
+
+
     # endregion
 
     ### region THICKNESS TAB
@@ -1127,6 +1130,16 @@ class DataPipeline(QObject):
             title, hint = ERROR_CONTENT["area_incomplete"]
             user_error(title, (hint + "last frame."))
 
+        for data_store in (self.area_data_left, self.area_data_right):
+            areas =  []
+            for props in data_store.values():
+                area, _, _, label = props
+                areas.append(area)
+
+            if max(areas) > 2*min(areas):
+                title, hint = ERROR_CONTENT["large_area"]
+                user_error(title, hint)
+
     def set_n_ellipses(self, value: int):
         if self.n_ellipses != value:
             self.n_ellipses = value
@@ -1178,8 +1191,17 @@ class DataPipeline(QObject):
         self.v_ext_right = (4 / 3) * np.pi * (self.ra_right ** 2 * self.rb_right)
         self.v_int_right = (4 / 3) * np.pi * ((self.ra_right-self.t_final) ** 2 * (self.rb_right-self.t_final))
         self.v_wall = self.v_ext_right - self.v_int_right
+        if self.v_wall < 8:
+            title, hint = ERROR_CONTENT["warning_v_wall"]
+            user_error((title + "small."), hint)
+        if self.v_wall > 50:
+            title, hint = ERROR_CONTENT["warning_v_wall"]
+            user_error((title + "large."), hint)
         self.v_ext_left = (4 / 3) * np.pi * (self.ra_left ** 2 * self.rb_left)
         self.v_int_left = self.v_ext_left - self.v_wall
+        if self.v_int_left > 100:
+            title, hint = ERROR_CONTENT["large_v_inner_0"]
+            user_error(title, hint)
 
         if self.v_int_left < 0:
             log.ERROR(f"Negative volume.")
@@ -1265,79 +1287,96 @@ class DataPipeline(QObject):
         Public method to perform all calculations and generate a detailed
         CSV report and summary data.
         """
-        # 1. Grab only the calculated physics data and frames
-        frames, thickness, volume, diameter = self.get_stress_stretch()
+        if self.export_selection == "all":
+            # 1. Grab only the calculated physics data and frames
+            frames, thickness, volume, diameter = self.get_stress_stretch()
 
-        # 2. Pull our trusted analysis pressure directly from the class state
-        p_analysis = np.array(self.analysis_data["p"])
+            # 2. Pull our trusted analysis pressure directly from the class state
+            p_analysis = np.array(self.analysis_data["p"])
 
-        stiffness_data = self.calculate_stiffness_at_poi(p_analysis)
-        interval_data = self.calculate_intervals(p_analysis)
+            stiffness_data = self.calculate_stiffness_at_poi(p_analysis)
+            interval_data = self.calculate_intervals(p_analysis)
 
-        num_frames = len(frames)
+            num_frames = len(frames)
 
-        # 3. Grab our universal slice to align the historical pipeline data
-        s = self.analysis_slice
+            # 3. Grab our universal slice to align the historical pipeline data
+            s = self.analysis_slice
 
-        report_data = {
-            "frame": frames,
-            # Slice historical data perfectly to match
-            "t_trimmed": self.trimmed_data["t"][s],
-            "p_trimmed": self.trimmed_data["p"][s],
-            "p_smoothed": self.smoothed_data["p"][s],
-            # We can use our final analysis_data directly here!
-            "p_zeroed(mmHg)": self.analysis_data["p"],
-            "thickness(mm)": thickness,
-            "diameter(midwall)": diameter,
-            "v_inner(mm3)": volume,
-            "stretch": self.stretch,
-            "stress(kpa)": self.stress,
-        }
+            report_data = {
+                "frame": frames,
+                # Slice historical data perfectly to match
+                "t_trimmed": self.trimmed_data["t"][s],
+                "p_trimmed": self.trimmed_data["p"][s],
+                "p_smoothed": self.smoothed_data["p"][s],
+                # We can use our final analysis_data directly here!
+                "p_zeroed(mmHg)": self.analysis_data["p"],
+                "thickness(mm)": thickness,
+                "diameter(midwall)": diameter,
+                "v_inner(mm3)": volume,
+                "stretch": self.stretch,
+                "stress(kpa)": self.stress,
+            }
 
-        # Unpack stiffness data into columns
-        poi_cols = {
-            "pressures_of_interest": self.pressures_of_interest,
-            "nearest_pressure": [data.get('true_p', np.nan) for p, data in stiffness_data.items()],
-            "stiffness(kPa)": [data.get('modulus_kPa', np.nan) for p, data in stiffness_data.items()],
-            "stretch_at_poi": [data.get('stretch', np.nan) for p, data in stiffness_data.items()],
-            "stress_at_poi": [data.get('stress', np.nan) for p, data in stiffness_data.items()],
-        }
+            # Unpack stiffness data into columns
+            poi_cols = {
+                "pressures_of_interest": self.pressures_of_interest,
+                "nearest_pressure": [data.get('true_p', np.nan) for p, data in stiffness_data.items()],
+                "stiffness(kPa)": [data.get('modulus_kPa', np.nan) for p, data in stiffness_data.items()],
+                "stretch_at_poi": [data.get('stretch', np.nan) for p, data in stiffness_data.items()],
+                "stress_at_poi": [data.get('stress', np.nan) for p, data in stiffness_data.items()],
+            }
 
-        interval_cols = {
-            "pressure_intervals": [p for p, data in interval_data.items()],
-            "stretch_intervals": [data.get('stretch', np.nan) for p, data in interval_data.items()],
-            "stress_intervals": [data.get('stress', np.nan) for p, data in interval_data.items()],
-        }
+            interval_cols = {
+                "pressure_intervals": [p for p, data in interval_data.items()],
+                "stretch_intervals": [data.get('stretch', np.nan) for p, data in interval_data.items()],
+                "stress_intervals": [data.get('stress', np.nan) for p, data in interval_data.items()],
+            }
 
-        for key, val in interval_cols.items():
-            padded_array = np.full(num_frames, np.nan)
-            padded_array[:len(val)] = val
-            report_data[key] = padded_array
+            for key, val in interval_cols.items():
+                padded_array = np.full(num_frames, np.nan)
+                padded_array[:len(val)] = val
+                report_data[key] = padded_array
 
-        # Pad arrays to match the number of frames for CSV export
-        for key, val in poi_cols.items():
-            padded_array = np.full(num_frames, np.nan)
-            padded_array[:len(val)] = val
-            report_data[key] = padded_array
+            # Pad arrays to match the number of frames for CSV export
+            for key, val in poi_cols.items():
+                padded_array = np.full(num_frames, np.nan)
+                padded_array[:len(val)] = val
+                report_data[key] = padded_array
 
-        v_wall_col = np.full(num_frames, np.nan)
-        v_wall_col[0] = self.v_wall
-        report_data["v_wall(mm3)"] = v_wall_col
+            v_wall_col = np.full(num_frames, np.nan)
+            v_wall_col[0] = self.v_wall
+            report_data["v_wall(mm3)"] = v_wall_col
 
-        if self.wave_data:
-            for k, v in self.wave_data.items():
-                report_col = np.full(num_frames, np.nan)
-                report_col[0] = v
-                report_data[k] = report_col
+            v_infused_col = np.full(num_frames, np.nan)
+            v_infused_col[0] = self.trimmed_data["t"][s][-1] * self.infusion_rate
+            report_data["v_infused_system(mm3)"] = v_infused_col
 
-        self.write_csv_report(report_data, num_frames)
-        self.emit_results_to_ui(report_data, num_frames)
+            v_infused_diff_col = np.full(num_frames, np.nan)
+            v_infused_diff_col[0] = self.v_int_right - self.v_int_left
+            report_data["v_infused_imaging(mm3)"] = v_infused_diff_col
+
+            if self.wave_data:
+                for k, v in self.wave_data.items():
+                    report_col = np.full(num_frames, np.nan)
+                    report_col[0] = v
+                    report_data[k] = report_col
+
+            self.write_csv_report(report_data, num_frames)
+            self.emit_results_to_ui(report_data, num_frames)
+
+        else:
+            export_data = {k: [v] for k, v in self.wave_data.items()}
+            self.write_csv_report(export_data, 1)
+
 
     def write_csv_report(self, report_data: dict, num_rows: int):
         """Handles the logic of writing the final report to a CSV file."""
         filename = os.path.splitext(os.path.basename(self.csv_path))[0].removesuffix("_pressure")
         folder = os.path.dirname(self.csv_path)
-        filepath = Path(f"{folder}/{filename}_results.csv")
+        if self.export_selection == "all":
+            filepath = Path(f"{folder}/{filename}_results.csv")
+        else:
+            filepath = Path(f"{folder}/{filename}_results_tpe_only.csv")
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         # Handle existing files by incrementing a counter

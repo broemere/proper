@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, Slot, QUrl
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QComboBox, QFormLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QComboBox, QFormLayout, QDoubleSpinBox
 from PySide6.QtGui import QDesktopServices
 from data_pipeline import DataPipeline
 from processing.data_transform import format_value
@@ -41,6 +41,19 @@ class ExportTab(QWidget):
         ellipses_layout.addWidget(ellipse_label)
         ellipses_layout.addWidget(self.selector_combo)
         ellipses_layout.addStretch()
+
+        infusion_label = QLabel("Infusion rate (µL/s):")
+        ellipses_layout.addWidget(infusion_label)
+        self.infusion_spin = QDoubleSpinBox(value=self.pipeline.infusion_rate, minimum=0, singleStep=0.1)
+        ellipses_layout.addWidget(self.infusion_spin)
+        ellipses_layout.addStretch()
+
+        export_combo_label = QLabel("Results to export:")
+        self.export_combo = QComboBox()
+        self.export_combo.addItems(["All", "TPE Only"])
+        ellipses_layout.addWidget(export_combo_label)
+        ellipses_layout.addWidget(self.export_combo)
+
         main_layout.addLayout(ellipses_layout)
 
         # --- Create "First" and "Last" sections ---
@@ -110,8 +123,12 @@ class ExportTab(QWidget):
         """Connects UI widget signals to pipeline and pipeline signals to UI slots."""
         # When the user changes the combo box, tell the pipeline
         self.selector_combo.currentIndexChanged.connect(self._selection_changed)
+        # When the user changes the combo box, tell the pipeline
+        self.export_combo.currentTextChanged.connect(self._export_selection_changed)
         # When the pipeline's n_ellipses changes, update the combo box
         self.pipeline.n_ellipses_changed.connect(self._update_selector_display)
+        # When the user changes the infusion rate, tell the pipeline
+        self.infusion_spin.valueChanged.connect(self._infusion_rate_changed)
         # When pipeline results are updated, update the labels
         self.pipeline.results_updated.connect(self._update_all_fields)
         # Connect buttons
@@ -173,6 +190,22 @@ class ExportTab(QWidget):
         # Tell the pipeline about the change. The pipeline will then emit a
         # signal, which will trigger saving and any other UI updates.
         self.pipeline.set_n_ellipses(index + 1)
+
+    @Slot(int)
+    def _export_selection_changed(self, text: str):
+        """Informs the pipeline that the user has changed the number of ellipses."""
+        # Tell the pipeline about the change. The pipeline will then emit a
+        # signal, which will trigger saving and any other UI updates.
+        print(f"Export Selection Changed: {text}")
+        self.pipeline.export_selection = text.lower()
+
+    @Slot(int)
+    def _infusion_rate_changed(self, val: int):
+        """Informs the pipeline that the user has changed the number of ellipses."""
+        # Tell the pipeline about the change. The pipeline will then emit a
+        # signal, which will trigger saving and any other UI updates.
+        print("Infusion Rate Changed", round(val,3))
+        self.pipeline.infusion_rate = round(val,3)
 
     @Slot(int)
     def _update_selector_display(self, n_ellipses: int):
