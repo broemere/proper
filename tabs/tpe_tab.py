@@ -144,27 +144,29 @@ class TPETab(QWidget):
         self.peak_scatter.sigClicked.connect(self._on_peak_clicked)
 
     def _on_peak_clicked(self, plot, points):
-        """NEW: Toggles a wave's exclusion status when clicked"""
+        """Toggles a wave's exclusion status when clicked based on its Time."""
         if not points:
             return
 
         clicked_point = points[0]
-        peak_id = clicked_point.data()  # Get the underlying index we assigned
+        peak_time = clicked_point.data()  # We will pass the time array into this kwarg later
 
-        if peak_id is None:
+        if peak_time is None:
             return
 
-        if peak_id in self.pipeline.excluded_waves:
-            self.pipeline.excluded_waves.remove(peak_id)
+        # Round to 5 decimal places to guarantee JSON serialization stability
+        safe_time = round(float(peak_time), 5)
+
+        if safe_time in self.pipeline.excluded_waves:
+            self.pipeline.excluded_waves.remove(safe_time)
         else:
-            self.pipeline.excluded_waves.add(peak_id)
+            self.pipeline.excluded_waves.add(safe_time)
 
         # Re-run metrics to apply the filter and update dot colors immediately
         self._calculate_wave_metrics(self.onset_line_main.value(), self.offset_line_main.value())
 
     def _on_params_changed(self):
         """Emits new parameters and recalculates metrics based on current bounds."""
-        self.pipeline.excluded_waves.clear()  # Clear state on param change
         dist_val = self.spin_dist.value()
         prom_val = self.spin_prom.value()
         # 1. Emit to the pipeline
@@ -183,7 +185,6 @@ class TPETab(QWidget):
             self.onset_line_main.setValue(start_t)
 
         # 3. Emit the updated bounds back to the pipeline/backend
-        self.pipeline.excluded_waves.clear()  # Clear state on bound drag
         print(f"User manually updated bounds: Start={start_t:.2f}m, End={end_t:.2f}m")
         self._calculate_wave_metrics(start_t, end_t)
 
@@ -220,6 +221,17 @@ class TPETab(QWidget):
         p_lowpass = filtfilt(b, a, p)
         p_highpass = p - p_lowpass
 
+        self.spin_dist.blockSignals(True)
+        self.spin_prom.blockSignals(True)
+
+        self.spin_dist.setValue(getattr(self.pipeline, 'tpe_distance', 4.0))
+        self.spin_prom.setValue(getattr(self.pipeline, 'tpe_prominence', 0.5))
+
+        # Unblock signals so the user can use them again
+        self.spin_dist.blockSignals(False)
+        self.spin_prom.blockSignals(False)
+
+
         onset_time = self.pipeline.tpe_onset_time
 
         # Set the end time to the absolute final frame of the data
@@ -240,7 +252,6 @@ class TPETab(QWidget):
         self.offset_line_main.setValue(end_time)
 
         # 3. Emit the initial guess to the pipeline immediately
-        self.pipeline.excluded_waves.clear()  # Clear state on new data
         print(f"Initial bounds automatically emitted: Start={onset_time:.2f}m, End={end_time:.2f}m")
         self._calculate_wave_metrics(onset_time, end_time)
 
@@ -305,19 +316,23 @@ class TPETab(QWidget):
             p_peaks = p_sliced[peaks] + 0.75
 
             brushes = []
-            for i in range(total_detected_count):
-                if i in self.pipeline.excluded_waves:
+            for t in t_peaks:
+                safe_time = round(float(t), 5)
+                if safe_time in self.pipeline.excluded_waves:
                     brushes.append(pg.mkBrush(color=(128, 128, 128, 200)))  # Grayed out
                 else:
                     brushes.append(pg.mkBrush('#ff007f'))  # Active pink
 
-            # Inject the array index 'i' into the 'data' kwarg so we can retrieve it on click
-            self.peak_scatter.setData(t_peaks, p_peaks, brush=brushes, data=np.arange(total_detected_count))
+            # INJECT t_peaks into the 'data' kwarg so we can retrieve the exact time on click
+            self.peak_scatter.setData(t_peaks, p_peaks, brush=brushes, data=t_peaks)
         else:
             self.peak_scatter.setData([], [])
 
-        # 3. Create the valid subset for math
-        valid_peaks = [p for i, p in enumerate(peaks) if i not in self.pipeline.excluded_waves]
+        # 3. Create the valid subset for math by checking the rounded time
+        valid_peaks = [
+            p for p in peaks
+            if round(float(t_sliced_min[p]), 5) not in self.pipeline.excluded_waves
+        ]
         wave_count = len(valid_peaks)
 
         if wave_count < 2:

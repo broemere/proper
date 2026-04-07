@@ -220,6 +220,7 @@ class DataPipeline(QObject):
         self.trim_stop = max(self.trim_start, min(stop, valid_max))
         self.update_pipeline()
         log.info(("TRIM VALUES", self.trim_start, self.trim_stop))
+        self.excluded_waves.clear()
         self.trimming_data.emit()
 
     def set_zeroing(self, method: str, window: int):
@@ -227,6 +228,7 @@ class DataPipeline(QObject):
         self.zeroing_window = window
         self.zero_method_changed.emit(method)
         self.zero_window_changed.emit(window)
+        self.excluded_waves.clear()
         self.update_pipeline()
 
     def set_smoothing(self, method: str, window: int):
@@ -234,6 +236,7 @@ class DataPipeline(QObject):
         self.smoothing_window = window
         self.smooth_method_changed.emit(method)
         self.smooth_window_changed.emit(window)
+        self.excluded_waves.clear()
         self.update_pipeline()
 
     @property
