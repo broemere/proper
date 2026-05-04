@@ -351,18 +351,36 @@ class TPETab(QWidget):
         amplitudes = []
         max_slopes = []
 
+        full_wave_data = []
+
         for i in range(len(valid_peaks)):
             peak_idx = valid_peaks[i]
 
-            # Searching back to the previous VALID peak ensures we find the global trough
-            # even if there's a noisy bump we excluded between them.
+            # The furthest back we ever need to look is the previous valid peak
             start_search = valid_peaks[i - 1] if i > 0 else 0
 
             if start_search == peak_idx:
                 continue
 
-            trough_rel_idx = np.argmin(p_sliced[start_search:peak_idx])
-            trough_idx = start_search + trough_rel_idx
+            # --- THE FIX: Zero-Crossing Backward Search ---
+            local_min_val = p_sliced[peak_idx]
+            trough_idx = peak_idx
+
+            # Walk backwards from the current peak down to the start limit
+            for j in range(peak_idx - 1, start_search - 1, -1):
+                val = p_sliced[j]
+
+                # Update the lowest point found so far
+                if val < local_min_val:
+                    local_min_val = val
+                    trough_idx = j
+
+                # Stop Condition: If the signal becomes positive AND we have already
+                # dipped below zero to find a trough, we have hit a preceding hump.
+                if val > 0 and local_min_val < 0:
+                    break
+                if local_min_val < 0 and (val - local_min_val) > 0.1:
+                    break
 
             amp = p_sliced[peak_idx] - p_sliced[trough_idx]
             amplitudes.append(amp)
@@ -384,6 +402,11 @@ class TPETab(QWidget):
             elif len(t_edge) > 1:
                 fallback_slope = (p_edge[-1] - p_edge[0]) / (t_edge[-1] - t_edge[0])
                 max_slopes.append(fallback_slope)
+
+            full_wave_data.append({"t": t_sliced_sec[peak_idx],
+                                   "max_p": p_lowpass_sliced[peak_idx],
+                                   "p2p_amp": amp,
+                                   "leading_slope": slope})
 
         self.lbl_count.setText(f"Wave Count: {wave_count}")
         self.lbl_freq.setText(f"Median Frequency: {freq_hz:.3f} Hz")
@@ -409,3 +432,4 @@ class TPETab(QWidget):
             "wave_count": wave_count,
         }
         self.pipeline.wave_data = wave_data
+        self.pipeline.full_wave_data = full_wave_data

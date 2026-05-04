@@ -145,6 +145,7 @@ class DataPipeline(QObject):
 
         # TPE Tab
         self.wave_data = {}
+        self.full_wave_data = []
         self.tpe_onset_time = 0
         self.tpe_end_time = -1
         self.excluded_waves = set()
@@ -421,6 +422,10 @@ class DataPipeline(QObject):
         self.update_pipeline()
         self.author_recieved.emit(self.author)
         self.csv_filename_updated.emit(self.csv_path)
+        if not Path(self.video).exists():
+            mkv_path = Path(self.video).with_suffix(".mkv")
+            if mkv_path.exists():
+                self.video = str(mkv_path)
         self.video_filename_updated.emit(self.video)
         self.known_length_changed.emit(self.known_length)
         self.pixel_length_changed.emit(self.pixel_length)
@@ -1368,6 +1373,22 @@ class DataPipeline(QObject):
                     report_col = np.full(num_frames, np.nan)
                     report_col[0] = v
                     report_data[k] = report_col
+
+            if self.full_wave_data:
+                t_col = np.full(num_frames, np.nan)
+                p_col = np.full(num_frames, np.nan)
+                amp_col = np.full(num_frames, np.nan)
+                slope_col = np.full(num_frames, np.nan)
+                for i, wave in enumerate(self.full_wave_data):
+                    t_col[i] = wave["t"]
+                    p_col[i] = wave["max_p"]
+                    amp_col[i] = wave["p2p_amp"]
+                    slope_col[i] = wave["leading_slope"]
+                report_data["tpe_t(s)"] = t_col
+                report_data["tpe_p_max(mmHg)"] = p_col
+                report_data["tpe_p2p_amplitude(mmHg)"] = amp_col
+                report_data["tpe_leading_slope(mmHg/s)"] = slope_col
+
 
             self.write_csv_report(report_data, num_frames)
             self.emit_results_to_ui(report_data, num_frames)
