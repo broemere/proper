@@ -4,11 +4,13 @@ from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 from processing.data_transform import zero_data, smooth_data, label_image, create_visual_from_labels, serialize_objects, deserialize_objects, n_closest_numbers
 from processing.data_loader import load_csv, frame_loader
+from processing.file_handling import resolve_cross_platform_path
 from collections import OrderedDict
 import numpy as np
 import logging
 import math
 import json
+import sys
 import os
 from config import APP_VERSION
 from pathlib import Path
@@ -156,6 +158,8 @@ class DataPipeline(QObject):
         self.n_ellipses = 0
         self.exported_file = None
         self.export_selection = "all"
+
+        self.platform = sys.platform
 
 
     ### region CSV handling
@@ -421,10 +425,17 @@ class DataPipeline(QObject):
     def refresh_session(self):
         self.update_pipeline()
         self.author_recieved.emit(self.author)
+        if sys.platform != self.platform or (sys.platform == "darwin" and ":" in self.video) or (sys.platform == "win32" and ":" not in self.video):
+            resolved_path = resolve_cross_platform_path(self.video)
+            print("File resolved:", resolved_path)
+            if resolved_path:
+                self.video = str(resolved_path / Path(self.video).name)
+                self.csv_path = str(resolved_path / Path(self.csv_path).name)
         self.csv_filename_updated.emit(self.csv_path)
         if not Path(self.video).exists():
             mkv_path = Path(self.video).with_suffix(".mkv")
             if mkv_path.exists():
+                log.info("Found MKV in place of original video file.")
                 self.video = str(mkv_path)
         self.video_filename_updated.emit(self.video)
         self.known_length_changed.emit(self.known_length)
