@@ -156,6 +156,10 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.smooth_method_changed.connect(self._save_smooth_method)
         self.pipeline.smooth_window_changed.connect(self._save_smooth_window)
 
+        # File status indicators
+        self.pipeline.video_status_changed.connect(self.file_pickers.set_video_valid_state)
+        self.pipeline.video_status_changed.connect(self.update_tab_lock_state)
+
         # Scale
         self.pipeline.known_length_changed.connect(self._save_known_length)
         self.pipeline.scale_is_manual_changed.connect(self._save_scale_is_manual)
@@ -242,6 +246,28 @@ class AnalysisSessionWidget(QWidget):
         log.info(f"HANDLER: Importing Video {path} for session.")
         self.pipeline.load_video_file(path)
         self.file_pickers.set_video_label(path)
+
+    @Slot(bool)
+    def update_tab_lock_state(self, video_exists: bool):
+        """Adds or removes a lock icon on specific tabs based on video availability."""
+        # Define the base names for the tabs
+        plot_base_name = "📈 Plot"
+        frame_base_name = "🎞️ Frame Picker"
+
+        # Determine if we need the lock suffix
+        suffix = "" if video_exists else " 🔒"
+
+        # Update Plot tab
+        plot_idx = self.analysis_tabs.indexOf(self.plot_tab)
+        if plot_idx != -1:
+            self.analysis_tabs.setTabText(plot_idx, plot_base_name + suffix)
+            # Optional: self.analysis_tabs.setTabEnabled(plot_idx, video_exists)
+
+        # Update Frame Picker tab
+        frame_idx = self.analysis_tabs.indexOf(self.frame_tab)
+        if frame_idx != -1:
+            self.analysis_tabs.setTabText(frame_idx, frame_base_name + suffix)
+            # Optional: self.analysis_tabs.setTabEnabled(frame_idx, video_exists)
 
     # --- SLOTS FOR SAVING ---
 

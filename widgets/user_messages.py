@@ -96,5 +96,9 @@ ERROR_CONTENT = {
         "Warning: v_wall is ",
         "v_wall is typically between 8-50 mm³. Ensure your analysis looks correct."
     ),
+    "video_mismatch": (
+        "Video Mismatch Detected",
+        "The loaded video has different dimensions or frame count than the video originally used in this save file. Please carefully verify your analysis on all tabs as the mismatched video shape may misalign with the loaded data."
+    )
 
 }

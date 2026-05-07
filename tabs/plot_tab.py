@@ -53,9 +53,9 @@ class PlotTab(QWidget):
         trim_layout.addWidget(self.spin_start)
         trim_layout.addWidget(QLabel('Stop'))
         trim_layout.addWidget(self.spin_stop)
-        btn_reset = QPushButton('Reset')
-        btn_reset.clicked.connect(self._reset_trim)
-        trim_layout.addWidget(btn_reset)
+        self.btn_reset = QPushButton('Reset')
+        self.btn_reset.clicked.connect(self._reset_trim)
+        trim_layout.addWidget(self.btn_reset)
         controls_layout.addLayout(trim_layout)
 
         # Smooth controls
@@ -102,6 +102,7 @@ class PlotTab(QWidget):
         self.pipeline.transformed_data.connect(self._data_transformed)
         self.pipeline.trimming_data.connect(self._sync_ui_to_pipeline)
         self.pipeline.state_loaded.connect(self._on_state_loaded)
+        self.pipeline.video_status_changed.connect(self.set_controls_enabled)
 
     def showEvent(self, event: QEvent):
         """This Qt event fires every time the widget is shown."""
@@ -263,3 +264,17 @@ class PlotTab(QWidget):
         if self._hover_region:
             self.data_plot.removeItem(self._hover_region)
             self._hover_region = None
+
+    @Slot(bool)
+    def set_controls_enabled(self, video_exists: bool):
+        """Enables or disables UI controls based on video availability."""
+        log.info(f"PlotTab: Setting controls enabled state to {video_exists}")
+        self.spin_start.setEnabled(video_exists)
+        self.spin_stop.setEnabled(video_exists)
+        self.btn_reset.setEnabled(video_exists)
+
+        self.cb_smooth.setEnabled(video_exists)
+        self.spin_smooth_window.setEnabled(video_exists)
+
+        self.cb_zero.setEnabled(video_exists)
+        self.spin_zero_window.setEnabled(video_exists)

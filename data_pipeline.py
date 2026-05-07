@@ -29,6 +29,7 @@ class DataPipeline(QObject):
     author_recieved = Signal(str)
     csv_filename_updated = Signal(str)
     video_filename_updated = Signal(str)
+    video_status_changed = Signal(bool)
 
     # Plotting
     new_data = Signal()
@@ -88,6 +89,7 @@ class DataPipeline(QObject):
         self.csv_path = None
         self.video = None
         self.frame_count = 0
+        self.dimensions = (0, 0)
         self.initial_pressure = 0
         self.final_pressure = 25
         self.left_index = 0
@@ -281,6 +283,7 @@ class DataPipeline(QObject):
 
     def load_video_file(self, file_path: str, index=None):
         self.video = file_path
+        self.video_status_changed.emit(Path(file_path).exists())
         if index is None:
             index = self.trim_start
         self.task_manager.queue_task(
@@ -306,7 +309,21 @@ class DataPipeline(QObject):
         if self.left_image is None:
             log.error("Did not receive left frame")
         self.left_image_changed.emit(self.left_image)
-        self.frame_count = next(it)
+
+        new_frame_count = next(it)
+        new_dimensions = tuple(self.left_image.shape[:2]) if self.left_image is not None else (0, 0)
+
+        # If a save file was loaded, and the pipeline has existing video stats
+        if self.loaded_state and self.frame_count > 0 and tuple(self.dimensions) != (0, 0):
+            # Check if the newly loaded video differs from the saved stats
+            if new_frame_count != self.frame_count or new_dimensions != tuple(self.dimensions):
+                log.warning(
+                    f"Video Mismatch! Expected: {self.frame_count} frames, {self.dimensions}. Got: {new_frame_count} frames, {new_dimensions}.")
+                title, hint = ERROR_CONTENT["video_mismatch"]
+                user_error(title, hint)
+
+        self.frame_count = new_frame_count
+        self.dimensions = new_dimensions
         log.info(f"Frame count found: {self.frame_count}")
         self.set_trimming(0, self.working_length -1)
         if self.left_image is not None and self.right_image is None:
@@ -427,10 +444,14 @@ class DataPipeline(QObject):
         self.author_recieved.emit(self.author)
         if sys.platform != self.platform or (sys.platform == "darwin" and ":" in self.video) or (sys.platform == "win32" and ":" not in self.video):
             resolved_path = resolve_cross_platform_path(self.video)
-            print("File resolved:", resolved_path)
+            log.info("File resolved:", resolved_path)
             if resolved_path:
                 self.video = str(resolved_path / Path(self.video).name)
                 self.csv_path = str(resolved_path / Path(self.csv_path).name)
+                self.exported_file = str(resolved_path / Path(self.exported_file).name)
+                log.info("Cross Platform Filepath resolved", self.video)
+                log.info("Cross Platform Filepath resolved", self.csv_path)
+                log.info("Cross Platform Filepath resolved", self.exported_file)
         self.csv_filename_updated.emit(self.csv_path)
         if not Path(self.video).exists():
             mkv_path = Path(self.video).with_suffix(".mkv")
@@ -438,6 +459,8 @@ class DataPipeline(QObject):
                 log.info("Found MKV in place of original video file.")
                 self.video = str(mkv_path)
         self.video_filename_updated.emit(self.video)
+        video_exists = Path(self.video).exists() if self.video else False
+        self.video_status_changed.emit(video_exists)
         self.known_length_changed.emit(self.known_length)
         self.pixel_length_changed.emit(self.pixel_length)
         self.left_image_changed.emit(self.left_image)

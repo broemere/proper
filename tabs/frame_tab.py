@@ -175,6 +175,7 @@ class FrameTab(QWidget):
         self.pipeline.left_keypoint_changed.connect(self.on_left_keypoint_updated)
         self.pipeline.right_keypoint_changed.connect(self.on_right_keypoint_updated)
         self.pipeline.final_pressure_changed.connect(self.right_goto.setValue)
+        self.pipeline.video_status_changed.connect(self.set_controls_enabled)
 
         # --- Local UI Connections (No Data Logic) ---
         self.left_goto_button.clicked.connect(self._goto_left)
@@ -358,3 +359,20 @@ class FrameTab(QWidget):
     def _on_final_pressure_changed(self):
         """Sends the user-edited final pressure to the pipeline."""
         self.pipeline.set_final_pressure(self.right_goto.value())
+
+    @Slot(bool)
+    def set_controls_enabled(self, video_exists: bool):
+        """Enables or disables UI controls based on video availability."""
+        log.info(f"FrameTab: Setting controls enabled state to {video_exists}")
+
+        # Left Panel Controls
+        self.left_slider.setEnabled(video_exists)
+        self.left_spin.setEnabled(video_exists)
+        self.left_goto.setEnabled(video_exists)
+        self.left_goto_button.setEnabled(video_exists)
+
+        # Right Panel Controls
+        self.right_slider.setEnabled(video_exists)
+        self.right_spin.setEnabled(video_exists)
+        self.right_goto.setEnabled(video_exists)
+        self.right_goto_button.setEnabled(video_exists)

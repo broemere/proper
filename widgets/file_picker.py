@@ -71,3 +71,14 @@ class FilePickerWidget(QWidget):
     def set_video_label(self, path):
         self.video_path.setText(str(Path(path).parent)+os.path.sep)
         self.video_label.setText(Path(path).name)
+
+    def set_video_valid_state(self, is_valid: bool):
+        """Changes the UI indicator based on file availability."""
+        color = '#00a007' if is_valid else '#d32f2f'  # Green if valid, Red if missing
+        self.video_label.setStyleSheet(f'font-size: 14pt; color: {color};')
+
+        if not is_valid:
+            self.video_label.setToolTip(
+                "Video not found at the expected path. The session loaded, but original data is detached.")
+        else:
+            self.video_label.setToolTip("")
