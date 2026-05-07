@@ -129,6 +129,7 @@ class ExportTab(QWidget):
         self.pipeline.n_ellipses_changed.connect(self._update_selector_display)
         # When the user changes the infusion rate, tell the pipeline
         self.infusion_spin.valueChanged.connect(self._infusion_rate_changed)
+        self.pipeline.infusion_rate_changed.connect(self._update_infusion_display)
         # When pipeline results are updated, update the labels
         self.pipeline.results_updated.connect(self._update_all_fields)
         # Connect buttons
@@ -205,7 +206,7 @@ class ExportTab(QWidget):
         # Tell the pipeline about the change. The pipeline will then emit a
         # signal, which will trigger saving and any other UI updates.
         print("Infusion Rate Changed", round(val,3))
-        self.pipeline.infusion_rate = round(val,3)
+        self.pipeline.set_infusion_rate(round(val,3))
 
     @Slot(int)
     def _update_selector_display(self, n_ellipses: int):
@@ -213,6 +214,13 @@ class ExportTab(QWidget):
         self.selector_combo.blockSignals(True)
         self.selector_combo.setCurrentIndex(n_ellipses - 1)
         self.selector_combo.blockSignals(False)
+
+    @Slot(int)
+    def _update_infusion_display(self, infusion_rate: float):
+        """Updates the QComboBox to reflect the current state of the pipeline."""
+        self.infusion_spin.blockSignals(True)
+        self.infusion_spin.setValue(infusion_rate)
+        self.infusion_spin.blockSignals(False)
 
     @Slot()
     def open_current_directory(self):

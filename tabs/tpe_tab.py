@@ -257,7 +257,7 @@ class TPETab(QWidget):
 
     def _data_transformed(self, data: list):
         trimmed_data, smoothed_data, zeroed_data = data
-        self._update_trimmed_plot(trimmed_data)
+        self._update_trimmed_plot(self.pipeline.tpe_data)
 
     def _calculate_wave_metrics(self, start_t_min, end_t_min):
         """Slices the high-pass data between the user bounds and extracts wave metrics."""

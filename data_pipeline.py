@@ -77,6 +77,7 @@ class DataPipeline(QObject):
     # Export
     n_ellipses_changed = Signal(int)
     results_updated = Signal(dict)
+    infusion_rate_changed = Signal(float)
 
 
     def __init__(self, parent=None):
@@ -86,6 +87,7 @@ class DataPipeline(QObject):
         self.smoothed_data = {"t": [], "p": []}
         self.zeroed_data = {"t": [], "p": []}
         self.analysis_data = {"t": [], "p": []}
+        self.tpe_data = {"t": [], "p": []}
         self.csv_path = None
         self.video = None
         self.frame_count = 0
@@ -199,6 +201,7 @@ class DataPipeline(QObject):
             self.smoothed_data = smooth_data(self.trimmed_data, self.smoothing_method, self.smoothing_window + 1)
             # 3. Apply smoothing on the trimmed data.
             self.zeroed_data = zero_data(self.smoothed_data, self.zeroing_method, self.zeroing_window + 1)
+            self.tpe_data = zero_data(self.trimmed_data, self.zeroing_method, self.zeroing_window + 1)
             self._update_analysis_data()
             self.data_version += 1
             self.transformed_data.emit([self.trimmed_data, self.smoothed_data,self.zeroed_data])
@@ -486,6 +489,7 @@ class DataPipeline(QObject):
         #self.thickness_changed.emit(self.thickness_data)
         self.s_value_changed.emit(self.s_value)
         self.n_ellipses_changed.emit(self.n_ellipses)
+        self.infusion_rate_changed.emit(self.infusion_rate)
 
     def on_author_changed(self, new_author):
         self.author = new_author
@@ -1201,6 +1205,12 @@ class DataPipeline(QObject):
             self.data_version += 1
             self.n_ellipses_changed.emit(self.n_ellipses)
 
+    def set_infusion_rate(self, value: float):
+        if self.infusion_rate != value:
+            self.infusion_rate = value
+            log.info(f"Pipeline infusion rate set to: {self.infusion_rate}")
+            self.infusion_rate_changed.emit(self.infusion_rate)
+
     def process_blob_data(self, blob_data):
         """
         Calculates semi-axes radii (ra, rb) from blob properties.
@@ -1435,8 +1445,32 @@ class DataPipeline(QObject):
             self.emit_results_to_ui(report_data, num_frames)
 
         else:
-            export_data = {k: [v] for k, v in self.wave_data.items()}
-            self.write_csv_report(export_data, 1)
+            report_data = {}
+            if self.full_wave_data:
+                num_waves = len(self.full_wave_data)
+                if self.wave_data:
+                    for k, v in self.wave_data.items():
+                        report_col = np.full(num_waves, np.nan)
+                        report_col[0] = v
+                        report_data[k] = report_col
+                if self.full_wave_data:
+                    t_col = np.full(num_waves, np.nan)
+                    p_col = np.full(num_waves, np.nan)
+                    amp_col = np.full(num_waves, np.nan)
+                    slope_col = np.full(num_waves, np.nan)
+                    for i, wave in enumerate(self.full_wave_data):
+                        t_col[i] = wave["t"]
+                        p_col[i] = wave["max_p"]
+                        amp_col[i] = wave["p2p_amp"]
+                        slope_col[i] = wave["leading_slope"]
+                    report_data["tpe_t(s)"] = t_col
+                    report_data["tpe_p_max(mmHg)"] = p_col
+                    report_data["tpe_p2p_amplitude(mmHg)"] = amp_col
+                    report_data["tpe_leading_slope(mmHg/s)"] = slope_col
+                self.write_csv_report(report_data, num_waves)
+            else:
+                export_data = {k: [v] for k, v in self.wave_data.items()}
+                self.write_csv_report(export_data, 1)
 
 
     def write_csv_report(self, report_data: dict, num_rows: int):

@@ -175,6 +175,7 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.author_recieved.connect(self.tab_author.setText)
         self.pipeline.csv_filename_updated.connect(self.file_pickers.set_csv_label)
         self.pipeline.video_filename_updated.connect(self.file_pickers.set_video_label)
+        self.pipeline.infusion_rate_changed.connect(self._save_infusion_rate)
 
     def _load_settings_into_pipeline(self):
         """Reads values from QSettings and populates the pipeline."""
@@ -189,6 +190,9 @@ class AnalysisSessionWidget(QWidget):
         self.pipeline.set_scale_is_manual(is_manual)
         final_pressure = self.settings.value("frame/final_pressure", defaultValue=25.0, type=float)
         self.pipeline.set_final_pressure(final_pressure)
+        infusion_rate = round(self.settings.value("export/infusion_rate", defaultValue=0.5, type=float), 3)
+        print("Loaded infusion rate", infusion_rate)
+        self.pipeline.set_infusion_rate(infusion_rate)
         n_ellipses_index = self.settings.value("export/n_ellipses", defaultValue=3, type=int)
         self.pipeline.set_n_ellipses(n_ellipses_index + 1)
         saved_tool = self.settings.value("drawing/tool", defaultValue="lasso", type=str)
@@ -317,6 +321,11 @@ class AnalysisSessionWidget(QWidget):
     @Slot(str)
     def _save_smooth_window(self, smooth_window: int):
         self.settings.setValue("plot/smooth_window", smooth_window)
+
+    @Slot(str)
+    def _save_infusion_rate(self, infusion_rate: float):
+        print("Saved infusion rate")
+        self.settings.setValue("export/infusion_rate", infusion_rate)
 
     @Slot(str)
     def _save_author(self, author: str):
