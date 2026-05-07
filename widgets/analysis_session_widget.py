@@ -76,11 +76,12 @@ class AnalysisSessionWidget(QWidget):
         author_layout.addWidget(author_label)
         self.tab_author = QLineEdit()
         self.tab_author.setPlaceholderText("Enter name...")
-        username = get_system_username()
-        self.pipeline.on_author_changed(username)
-        self.tab_author.setText(username)
+        self.username = get_system_username()
+        authorname = self.settings.value("author", defaultValue=self.username, type=str)
+        self.pipeline.on_author_changed(authorname)
+        self.tab_author.setText(authorname)
         self.tab_author.setClearButtonEnabled(True)
-        self.tab_author.textEdited.connect(self.pipeline.on_author_changed)
+        self.tab_author.textEdited.connect(self._save_author)
         author_layout.addWidget(self.tab_author)
 
         top_layout.addWidget(author_widget, 0)
@@ -316,3 +317,11 @@ class AnalysisSessionWidget(QWidget):
     @Slot(str)
     def _save_smooth_window(self, smooth_window: int):
         self.settings.setValue("plot/smooth_window", smooth_window)
+
+    @Slot(str)
+    def _save_author(self, author: str):
+        if author.strip() == "":
+            author = self.username
+        author = author.strip()
+        self.pipeline.on_author_changed(author)
+        self.settings.setValue("author", author)

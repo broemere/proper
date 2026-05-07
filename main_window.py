@@ -1,7 +1,7 @@
 import logging
 from PySide6.QtCore import QSettings, Slot, Qt, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QMessageBox, QPushButton, QMenu, QFileDialog, QStyle
 from config import APP_NAME, APP_VERSION, SAVE_FILETYPE, REPO_URL
 from processing.task_manager import TaskManager
 from widgets.status_bar import StatusBarWidget
@@ -333,6 +333,7 @@ class MainWindow(QMainWindow):
         # Set the tab name
         file_name = os.path.splitext(os.path.basename(file_path))[0]
         self.super_tabs.setTabText(new_tab_index, file_name)
+        self.super_tabs.setTabIcon(new_tab_index, self.style().standardIcon(QStyle.SP_DriveNetIcon))
 
         # Instead of loading the state immediately, schedule it to run
         # after the event loop has had a chance to fully create the new tab.

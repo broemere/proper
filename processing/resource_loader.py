@@ -28,7 +28,7 @@ def setup_logging():
 
     # Use a rotating file handler to prevent log files from getting too large
     handler = logging.handlers.RotatingFileHandler(
-        log_file_path, maxBytes=5 * 1024 * 1024, backupCount=1
+        log_file_path, maxBytes=5 * 1024 * 1024, backupCount=1, encoding='utf-8'
     )
 
     # In development, also print to console. When bundled, only log to file.

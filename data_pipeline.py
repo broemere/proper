@@ -442,23 +442,26 @@ class DataPipeline(QObject):
     def refresh_session(self):
         self.update_pipeline()
         self.author_recieved.emit(self.author)
-        if sys.platform != self.platform or (sys.platform == "darwin" and ":" in self.video) or (sys.platform == "win32" and ":" not in self.video):
-            resolved_path = resolve_cross_platform_path(self.video)
-            log.info("File resolved:", resolved_path)
-            if resolved_path:
-                self.video = str(resolved_path / Path(self.video).name)
-                self.csv_path = str(resolved_path / Path(self.csv_path).name)
-                self.exported_file = str(resolved_path / Path(self.exported_file).name)
-                log.info("Cross Platform Filepath resolved", self.video)
-                log.info("Cross Platform Filepath resolved", self.csv_path)
-                log.info("Cross Platform Filepath resolved", self.exported_file)
-        self.csv_filename_updated.emit(self.csv_path)
-        if not Path(self.video).exists():
-            mkv_path = Path(self.video).with_suffix(".mkv")
-            if mkv_path.exists():
-                log.info("Found MKV in place of original video file.")
-                self.video = str(mkv_path)
+        if self.video:
+            if sys.platform != self.platform or (sys.platform == "darwin" and ":" in self.video) or (sys.platform == "win32" and ":" not in self.video):
+                resolved_path = resolve_cross_platform_path(self.video)
+                log.info("File resolved:", resolved_path)
+                if resolved_path:
+                    self.video = str(resolved_path / Path(self.video).name)
+                    log.info("Cross Platform Filepath resolved", self.video)
+                    if self.csv_path:
+                        self.csv_path = str(resolved_path / Path(self.csv_path).name)
+                        log.info("Cross Platform Filepath resolved", self.csv_path)
+                    if self.exported_file:
+                        self.exported_file = str(resolved_path / Path(self.exported_file).name)
+                        log.info("Cross Platform Filepath resolved", self.exported_file)
+            if not Path(self.video).exists():
+                mkv_path = Path(self.video).with_suffix(".mkv")
+                if mkv_path.exists():
+                    log.info("Found MKV in place of original video file.")
+                    self.video = str(mkv_path)
         self.video_filename_updated.emit(self.video)
+        self.csv_filename_updated.emit(self.csv_path)
         video_exists = Path(self.video).exists() if self.video else False
         self.video_status_changed.emit(video_exists)
         self.known_length_changed.emit(self.known_length)
@@ -467,12 +470,16 @@ class DataPipeline(QObject):
         self.right_image_changed.emit(self.right_image)
         self.brightness_changed.emit(self.brightness)
         self.contrast_changed.emit(self.contrast)
-        self.level_update()
+        if self.left_image:
+            self.level_update()
         self.threshold_changed.emit(self.threshold)
-        self.segment_image(self.left_threshed, "left")
-        self.segment_image(self.right_threshed, "right")
-        self.left_threshed_old = self.left_threshed.copy()
-        self.right_threshed_old = self.right_threshed.copy()
+        if self.left_threshed:
+            self.segment_image(self.left_threshed, "left")
+            self.left_threshed_old = self.left_threshed.copy()
+        if self.right_threshed:
+            self.segment_image(self.right_threshed, "right")
+
+            self.right_threshed_old = self.right_threshed.copy()
         self._recalculate_conversion_factor()
         print(self.scale_line_coords)
         #self.scale_line_coords_changed.emit(self.scale_line_coords)
