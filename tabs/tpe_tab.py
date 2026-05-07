@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, QEvent, Slot, Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QGroupBox, QGridLayout, QDoubleSpinBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox, QComboBox, QGroupBox, QGridLayout, QDoubleSpinBox, QCheckBox
 from PySide6.QtGui import QColor
 import pyqtgraph as pg
 from data_pipeline import DataPipeline
@@ -39,6 +39,8 @@ class TPETab(QWidget):
         self.highpass_curve = self.data_plot.plot([], [], pen=pg.mkPen('#00d2ff', width=1.5), name="High-Pass (Active Contraction)")
 
         self.highpass_curve.setZValue(2)
+
+        self.wave_regions = []
 
         # NEW: Explicit ScatterPlotItem to allow clicking and per-point data
         self.peak_scatter = pg.ScatterPlotItem(
@@ -95,6 +97,13 @@ class TPETab(QWidget):
         control_layout.addSpacing(20)
         control_layout.addWidget(QLabel("Prominence Threshold (x STD):"))
         control_layout.addWidget(self.spin_prom)
+
+        control_layout.addSpacing(20)  # <--- ADD THIS
+        self.chk_show_windows = QCheckBox("Show TPE Windows")
+        self.chk_show_windows.setToolTip("Display a window showing the trough to peak detected for each wave")
+        self.chk_show_windows.setChecked(True)  # Default to ON
+        control_layout.addWidget(self.chk_show_windows)  # <--- ADD THIS
+
         control_layout.addStretch()
         self.pressure_range = QLabel("Pressure Range: -- mmHg")
         control_layout.addWidget(self.pressure_range)
@@ -142,6 +151,13 @@ class TPETab(QWidget):
         self.spin_dist.valueChanged.connect(self._on_params_changed)
         self.spin_prom.valueChanged.connect(self._on_params_changed)
         self.peak_scatter.sigClicked.connect(self._on_peak_clicked)
+        self.chk_show_windows.toggled.connect(self._on_toggle_windows)
+
+    @Slot(bool)
+    def _on_toggle_windows(self, checked: bool):
+        """Instantly hides or shows all currently drawn wave regions."""
+        for region in self.wave_regions:
+            region.setVisible(checked)
 
     def _on_peak_clicked(self, plot, points):
         """Toggles a wave's exclusion status when clicked based on its Time."""
@@ -335,6 +351,10 @@ class TPETab(QWidget):
         ]
         wave_count = len(valid_peaks)
 
+        for region in self.wave_regions:
+            self.data_plot.removeItem(region)
+        self.wave_regions.clear()
+
         if wave_count < 2:
             self.lbl_count.setText("Wave Count: Not enough valid waves")
             self.lbl_freq.setText("Frequency: -- Hz")
@@ -381,6 +401,20 @@ class TPETab(QWidget):
                     break
                 if local_min_val < 0 and (val - local_min_val) > 0.1:
                     break
+
+            region_start_min = t_sliced_min[trough_idx]
+            region_end_min = t_sliced_min[peak_idx]
+
+            region = pg.LinearRegionItem(
+                values=[region_start_min, region_end_min],
+                brush=pg.mkBrush(0, 210, 255, 25),  # Transparent cyan (matches high-pass line)
+                pen=None,  # No borders for a cleaner look
+                movable=False  # Lock it in place
+            )
+            region.setZValue(1)  # Draw behind the curve lines but above grid/background
+            region.setVisible(self.chk_show_windows.isChecked())
+            self.data_plot.addItem(region)
+            self.wave_regions.append(region)
 
             amp = p_sliced[peak_idx] - p_sliced[trough_idx]
             amplitudes.append(amp)
