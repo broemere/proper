@@ -82,7 +82,7 @@ class TPETab(QWidget):
 
         self.spin_dist = QDoubleSpinBox()
         self.spin_dist.setRange(0.1, 20.0)
-        self.spin_dist.setSingleStep(0.5)
+        self.spin_dist.setSingleStep(0.1)
         self.spin_dist.setValue(self.pipeline.tpe_distance)  # Default 4 seconds
         self.spin_dist.setSuffix(" s")
 
@@ -363,7 +363,24 @@ class TPETab(QWidget):
             return
 
         # 4. Math applies strictly to valid_peaks
-        peak_intervals_sec = np.diff(t_sliced_sec[valid_peaks])
+        #peak_intervals_sec = np.diff(t_sliced_sec[valid_peaks])
+        #period_sec = float(np.median(peak_intervals_sec))
+        excluded_times = self.pipeline.excluded_waves
+
+        peak_intervals_sec = []
+
+        for p1, p2 in zip(peaks[:-1], peaks[1:]):
+            t1_min = round(float(t_sliced_min[p1]), 5)
+            t2_min = round(float(t_sliced_min[p2]), 5)
+
+            # Only use originally-adjacent peak pairs where neither endpoint was excluded
+            if t1_min in excluded_times or t2_min in excluded_times:
+                continue
+
+            peak_intervals_sec.append(t_sliced_sec[p2] - t_sliced_sec[p1])
+
+        peak_intervals_sec = np.asarray(peak_intervals_sec)
+
         period_sec = float(np.median(peak_intervals_sec))
         freq_hz = 1.0 / period_sec if period_sec > 0 else 0.0
         waves_per_min = freq_hz * 60.0
